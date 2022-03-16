@@ -1,0 +1,26 @@
+{
+	"models": [
+		{ 
+          "file": "Sponza/SponzaNoFlag.chk",
+          //"file": "Sponza/SponzaNoFlag.obj",
+		  "metal-rough": false,
+		  "materials": "Sponza/materials.json",
+		  //"materials": "Sponza/SponzaNoFlag.mat.json",
+		  "instances": [
+		      {
+				"scaling": 0.01,
+				"translation": [0, 0, 0]
+		      }
+		  ]
+		}
+	],
+    "cameras": [
+        {
+            "name": "Camera0",
+            "pos": [0, 1.8, 0],
+            "target": [1, 1.8, 0],
+            "up": [0, 1, 0]
+        }
+    ],
+    "active_camera": "Camera0"
+}
