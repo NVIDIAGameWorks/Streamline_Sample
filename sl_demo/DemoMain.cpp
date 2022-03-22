@@ -623,6 +623,7 @@ public:
 
         // Setup Render passes
         {
+            // Here, we intentionally leave the renderTargets oversized: (displaySize, displaySize) instead of (m_ui.renderSize, displaySize), to show the power of sl::Extent
             if (!m_RenderTargets || m_RenderTargets->IsUpdateRequired(displaySize, displaySize, preTonemapping))
             {
 
@@ -790,23 +791,20 @@ public:
         // If we do TAA or DLSS
         if (m_ui.AAMode !=AntiAliasingMode::NONE) {
 
-            // TAA evaluation
-
-
 #ifdef USE_SL
             // DLSS Evaluation
             if (m_ui.AAMode ==AntiAliasingMode::DLSS)
             {
-
                 m_SLWrapper->EvaluateDLSS(m_CommandList,
                     m_RenderTargets->m_ResolvedColor, 
                     renderColor,
                     m_RenderTargets->m_MotionVectors,
                     m_RenderTargets->m_Depth,
-                    m_FrameIndex);
+                    m_FrameIndex,
+                    m_ui.renderSize);
             }
 #endif
-
+            // TAA evaluation
             if (m_ui.AAMode ==AntiAliasingMode::TEMPORAL)
             {
                 if (m_PreviousViewsValid) m_TemporalAntiAliasingPass->RenderMotionVectors(m_CommandList, *m_View, *m_ViewPrevious);

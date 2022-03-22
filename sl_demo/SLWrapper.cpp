@@ -253,7 +253,8 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
             nvrhi::ITexture* resolvedColor,
             nvrhi::ITexture* motionVectors,
             nvrhi::ITexture* depth,
-            uint32_t frameIndex)
+            uint32_t frameIndex,
+            uint2 renderSize)
 {
     if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
     if (m_Device == nullptr) log::error("No device available.");
@@ -262,6 +263,8 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
 
     void* context;
     bool success = true;
+    sl::Extent renderExtent{ 0,0, renderSize.x, renderSize.y };
+    sl::Extent fullExtent{ 0,0, unresolvedColor->GetDesc().width, unresolvedColor->GetDesc().height };
 
 #if USE_DX11
     if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
@@ -273,10 +276,10 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
         sl::Resource resolvedColorResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, resolvedColor->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource) };
         sl::Resource depthResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, depth->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource) };
 
-        success = success && sl::setTag(&resolvedColorResource, sl::eBufferTypeDLSSInputColor);
-        success = success && sl::setTag(&unresolvedColorResource, sl::eBufferTypeDLSSOutputColor);
-        success = success && sl::setTag(&motionVectorsResource, sl::eBufferTypeMVec);
-        success = success && sl::setTag(&depthResource, sl::eBufferTypeDepth);
+        success = success && sl::setTag(&resolvedColorResource, sl::eBufferTypeDLSSInputColor, 0, &renderExtent);
+        success = success && sl::setTag(&unresolvedColorResource, sl::eBufferTypeDLSSOutputColor, 0, &fullExtent);
+        success = success && sl::setTag(&motionVectorsResource, sl::eBufferTypeMVec, 0, &renderExtent);
+        success = success && sl::setTag(&depthResource, sl::eBufferTypeDepth, 0, &renderExtent);
     }
 #endif
 
@@ -290,10 +293,10 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
         sl::Resource resolvedColorResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, resolvedColor->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource) };
         sl::Resource depthResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, depth->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource) };
 
-        success = success && sl::setTag(&resolvedColorResource, sl::eBufferTypeDLSSInputColor);
-        success = success && sl::setTag(&unresolvedColorResource, sl::eBufferTypeDLSSOutputColor);
-        success = success && sl::setTag(&motionVectorsResource, sl::eBufferTypeMVec);
-        success = success && sl::setTag(&depthResource, sl::eBufferTypeDepth);
+        success = success && sl::setTag(&resolvedColorResource, sl::eBufferTypeDLSSInputColor, 0, &renderExtent);
+        success = success && sl::setTag(&unresolvedColorResource, sl::eBufferTypeDLSSOutputColor, 0, &fullExtent);
+        success = success && sl::setTag(&motionVectorsResource, sl::eBufferTypeMVec, 0, &renderExtent);
+        success = success && sl::setTag(&depthResource, sl::eBufferTypeDepth, 0, &renderExtent);
     }
 #endif
 

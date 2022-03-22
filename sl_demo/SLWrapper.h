@@ -108,7 +108,8 @@ public:
         nvrhi::ITexture* resolvedColor,
         nvrhi::ITexture* motionVectors,
         nvrhi::ITexture* depth,
-        uint32_t frameIndex);
+        uint32_t frameIndex,
+        donut::math::uint2 renderSize);
 
 };
 
