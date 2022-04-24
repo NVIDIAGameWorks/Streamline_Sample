@@ -32,7 +32,7 @@
 //
 //----------------------------------------------------------------------------------
 
-#include <SLWrapper.h>
+#include <SLWrapper.h> 
 
 #ifdef USE_SL
 
@@ -58,7 +58,7 @@ using namespace donut::engine;
 
 bool SLWrapper::m_sl_initialised = false;
 nvrhi::IDevice* SLWrapper::m_Device = nullptr;
-
+nvrhi::GraphicsAPI SLWrapper::m_api = nvrhi::GraphicsAPI::D3D12;
 
 SLWrapper::SLWrapper(nvrhi::IDevice* device)
 {
@@ -86,9 +86,11 @@ void SLWrapper::logFunctionCallback(sl::LogType type, const char* msg) {
     }
 }
 
-void SLWrapper::Initialize()
+void SLWrapper::Initialize(nvrhi::GraphicsAPI api) 
 {
-    sl::Preferences pref;
+     sl::Preferences pref;
+     
+     m_api = api;
 
     pref.allocateCallback = &allocateResourceCallback;
     pref.releaseCallback = &releaseResourceCallback;
@@ -98,7 +100,7 @@ void SLWrapper::Initialize()
     // pref.numPathsToPlugins = 1;
     // const wchar_t* dir[] = { baseDir.c_str() };
     // pref.pathsToPlugins = dir;
-
+    
 #if _DEBUG
     pref.showConsole = true;
     pref.logMessageCallback = &logFunctionCallback;
@@ -108,14 +110,14 @@ void SLWrapper::Initialize()
     pref.logLevel = sl::LogLevel::eLogLevelOff;
 #endif
 
-    m_sl_initialised = sl::init(pref, APP_ID);
+    m_sl_initialised = slInit(pref, APP_ID);
     if (!m_sl_initialised) log::error("Failed to initialse SL.");
 }
 
 void SLWrapper::Shutdown()
 {
     if (m_sl_initialised) {
-        bool success = sl::shutdown();
+        bool success = slShutdown();
         if (!success) log::error("Failed to shutdown SL properly.");
         m_sl_initialised = false;
     }
@@ -124,43 +126,48 @@ void SLWrapper::Shutdown()
 void SLWrapper::SetSLConsts(const sl::Constants& consts, int frameNumber) {
     if (!m_sl_initialised) log::error("SL not initialised.");
     m_sl_consts = consts;
-    if (!sl::setConstants(m_sl_consts, frameNumber)) log::error("Failed to set SL constants.");
+    if (!slSetConstants(m_sl_consts, frameNumber)) log::error("Failed to set SL constants.");
 }
 
 void SLWrapper::SetDLSSConsts(const sl::DLSSConstants consts, int frameNumber)
 {
     if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
     m_dlss_consts = consts;
-    if (!sl::setFeatureConstants(sl::eFeatureDLSS, &m_dlss_consts, frameNumber)) log::error("Failed to set DLSS constants.");
+    if (!slSetFeatureConstants(sl::eFeatureDLSS, &m_dlss_consts, frameNumber)) log::error("Failed to set DLSS constants.");
 
 }
 
-void SLWrapper::QueryDLSSOptimalSettings(int2& outRenderSize, float& sharpness) {
+void SLWrapper::QueryDLSSOptimalSettings(DLSSSettings& settings) {
     if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
 
     sl::DLSSSettings dlssSettings = {};
-    if (!sl::getFeatureSettings(sl::eFeatureDLSS, &m_dlss_consts, &dlssSettings)) log::error("Failed to get DLSS optimal settings.");
+    sl::DLSSSettings1 dlssSettings1 = {};
+    dlssSettings.ext = &dlssSettings1;
+    if (!slGetFeatureSettings(sl::eFeatureDLSS, &m_dlss_consts, &dlssSettings)) log::error("Failed to get DLSS optimal settings.");
 
-    outRenderSize.x = static_cast<int>(dlssSettings.renderWidth);
-    outRenderSize.y = static_cast<int>(dlssSettings.renderHeight);
-    sharpness = dlssSettings.optimalSharpness;
+    settings.optimalRenderSize.x = static_cast<int>(dlssSettings.optimalRenderWidth);
+    settings.optimalRenderSize.y = static_cast<int>(dlssSettings.optimalRenderHeight);
+    settings.sharpness = dlssSettings.optimalSharpness;
 
+    settings.minRenderSize.x = dlssSettings1.renderWidthMin;
+    settings.minRenderSize.y = dlssSettings1.renderHeightMin;
+    settings.maxRenderSize.x = dlssSettings1.renderWidthMax;
+    settings.maxRenderSize.y = dlssSettings1.renderHeightMax;
 }
 
 bool SLWrapper::CheckSupportDLSS() {
     if (!m_sl_initialised) log::error("SL not initialised.");
 
-    bool support = sl::isFeatureSupported(sl::eFeatureDLSS);
+    bool support = slIsFeatureSupported(sl::eFeatureDLSS);
     if (support) log::info("DLSS is supported on this system.");
     else log::warning("DLSS is not supported on this system.");
     return support;
 }
 
-sl::Resource SLWrapper::allocateResourceCallback(const sl::ResourceDesc* resDesc) {
+sl::Resource SLWrapper::allocateResourceCallback(const sl::ResourceDesc* resDesc, void* device) {
 
-    if (m_Device == nullptr) {
-        log::error("There is no device to use for resource allocation. Most likely, SLWrapper has not been instantiated yet.");
-        return sl::Resource{};
+    if (m_Device) {
+        m_api = m_Device->getGraphicsAPI();
     }
 
     sl::Resource res = {};
@@ -171,10 +178,10 @@ sl::Resource SLWrapper::allocateResourceCallback(const sl::ResourceDesc* resDesc
 
 #ifdef USE_DX11
 
-        if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
+        if (m_api == nvrhi::GraphicsAPI::D3D11)
         {
             D3D11_BUFFER_DESC* desc = (D3D11_BUFFER_DESC*)resDesc->desc;
-            ID3D11Device* pd3d11Device = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_Device);
+            ID3D11Device* pd3d11Device = m_Device ? (ID3D11Device*)m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_Device) : (ID3D11Device*)device;
             ID3D11Buffer* pbuffer;
             bool success = SUCCEEDED(pd3d11Device->CreateBuffer(desc, nullptr, &pbuffer));
             if (!success) log::error("Failed to create buffer in SL allocation callback");
@@ -185,12 +192,12 @@ sl::Resource SLWrapper::allocateResourceCallback(const sl::ResourceDesc* resDesc
 #endif
 
 #ifdef USE_DX12
-        if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
+        if (m_api == nvrhi::GraphicsAPI::D3D12)
         {
             D3D12_RESOURCE_DESC* desc = (D3D12_RESOURCE_DESC*)resDesc->desc;
             D3D12_HEAP_PROPERTIES* heap = (D3D12_HEAP_PROPERTIES*)resDesc->heap;
             D3D12_RESOURCE_STATES state = (D3D12_RESOURCE_STATES)resDesc->state;
-            ID3D12Device* pd3d12Device = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D12_Device);
+            ID3D12Device* pd3d12Device = m_Device ? (ID3D12Device*)m_Device->getNativeObject(nvrhi::ObjectTypes::D3D12_Device) : (ID3D12Device*)device;
             ID3D12Resource* pbuffer;
             bool success = SUCCEEDED(pd3d12Device->CreateCommittedResource(heap, D3D12_HEAP_FLAG_NONE, desc, state, nullptr, IID_PPV_ARGS(&pbuffer)));
             if (!success) log::error("Failed to create buffer in SL allocation callback");
@@ -205,10 +212,10 @@ sl::Resource SLWrapper::allocateResourceCallback(const sl::ResourceDesc* resDesc
 
 #ifdef USE_DX11
 
-        if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
+        if (m_api == nvrhi::GraphicsAPI::D3D11)
         {
             D3D11_TEXTURE2D_DESC* desc = (D3D11_TEXTURE2D_DESC*)resDesc->desc;
-            ID3D11Device* pd3d11Device = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_Device);
+            ID3D11Device* pd3d11Device = m_Device ? (ID3D11Device*)m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_Device) : (ID3D11Device*)device;
             ID3D11Texture2D* ptexture;
             bool success = SUCCEEDED(pd3d11Device->CreateTexture2D(desc, nullptr, &ptexture));
             if (!success) log::error("Failed to create texture in SL allocation callback");
@@ -219,13 +226,13 @@ sl::Resource SLWrapper::allocateResourceCallback(const sl::ResourceDesc* resDesc
 #endif
 
 #ifdef USE_DX12
-        if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
+        if (m_api == nvrhi::GraphicsAPI::D3D12)
         {
 
             D3D12_RESOURCE_DESC* desc = (D3D12_RESOURCE_DESC*)resDesc->desc;
             D3D12_RESOURCE_STATES state = (D3D12_RESOURCE_STATES)resDesc->state;
             D3D12_HEAP_PROPERTIES* heap = (D3D12_HEAP_PROPERTIES*)resDesc->heap;
-            ID3D12Device* pd3d12Device = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D12_Device);
+            ID3D12Device* pd3d12Device = m_Device ? (ID3D12Device*)m_Device->getNativeObject(nvrhi::ObjectTypes::D3D12_Device) : (ID3D12Device*)device;
             ID3D12Resource* ptexture;
             bool success = SUCCEEDED(pd3d12Device->CreateCommittedResource(heap, D3D12_HEAP_FLAG_NONE, desc, state, nullptr, IID_PPV_ARGS(&ptexture)));
             if (!success) log::error("Failed to create texture in SL allocation callback");
@@ -239,7 +246,7 @@ sl::Resource SLWrapper::allocateResourceCallback(const sl::ResourceDesc* resDesc
 
 }
 
-void SLWrapper::releaseResourceCallback(sl::Resource * resource)
+void SLWrapper::releaseResourceCallback(sl::Resource * resource, void* device)
 {
     if (resource)
     {
@@ -259,11 +266,13 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
     if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
     if (m_Device == nullptr) log::error("No device available.");
     
-    if (!sl::setFeatureConstants(sl::Feature::eFeatureDLSS, &m_dlss_consts, frameIndex)) log::error("Failed to set DLSS features.");
+    if (!slSetFeatureConstants(sl::Feature::eFeatureDLSS, &m_dlss_consts, frameIndex)) log::error("Failed to set DLSS features.");
 
     void* context;
     bool success = true;
-    sl::Extent renderExtent{ 0,0, renderSize.x, renderSize.y };
+    sl::Extent renderExtent{ 0,0, 
+        renderSize.x ? renderSize.x : resolvedColor->GetDesc().width, 
+        renderSize.y ? renderSize.y : resolvedColor->GetDesc().height };
     sl::Extent fullExtent{ 0,0, unresolvedColor->GetDesc().width, unresolvedColor->GetDesc().height };
 
 #if USE_DX11
@@ -276,10 +285,10 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
         sl::Resource resolvedColorResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, resolvedColor->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource) };
         sl::Resource depthResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, depth->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource) };
 
-        success = success && sl::setTag(&resolvedColorResource, sl::eBufferTypeDLSSInputColor, 0, &renderExtent);
-        success = success && sl::setTag(&unresolvedColorResource, sl::eBufferTypeDLSSOutputColor, 0, &fullExtent);
-        success = success && sl::setTag(&motionVectorsResource, sl::eBufferTypeMVec, 0, &renderExtent);
-        success = success && sl::setTag(&depthResource, sl::eBufferTypeDepth, 0, &renderExtent);
+        success = success && slSetTag(&resolvedColorResource, sl::eBufferTypeScalingInputColor, 0, &renderExtent);
+        success = success && slSetTag(&unresolvedColorResource, sl::eBufferTypeScalingOutputColor, 0, &fullExtent);
+        success = success && slSetTag(&motionVectorsResource, sl::eBufferTypeMVec, 0, &renderExtent);
+        success = success && slSetTag(&depthResource, sl::eBufferTypeDepth, 0, &renderExtent);
     }
 #endif
 
@@ -293,16 +302,16 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
         sl::Resource resolvedColorResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, resolvedColor->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource) };
         sl::Resource depthResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, depth->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource) };
 
-        success = success && sl::setTag(&resolvedColorResource, sl::eBufferTypeDLSSInputColor, 0, &renderExtent);
-        success = success && sl::setTag(&unresolvedColorResource, sl::eBufferTypeDLSSOutputColor, 0, &fullExtent);
-        success = success && sl::setTag(&motionVectorsResource, sl::eBufferTypeMVec, 0, &renderExtent);
-        success = success && sl::setTag(&depthResource, sl::eBufferTypeDepth, 0, &renderExtent);
+        success = success && slSetTag(&resolvedColorResource, sl::eBufferTypeScalingInputColor, 0, &renderExtent);
+        success = success && slSetTag(&unresolvedColorResource, sl::eBufferTypeScalingOutputColor, 0, &fullExtent);
+        success = success && slSetTag(&motionVectorsResource, sl::eBufferTypeMVec, 0, &renderExtent);
+        success = success && slSetTag(&depthResource, sl::eBufferTypeDepth, 0, &renderExtent);
     }
 #endif
 
     if (!success) log::error("Failed DLSS tag setting");
 
-    if (!sl::evaluateFeature(context, sl::Feature::eFeatureDLSS, frameIndex)) { log::error("Failed DLSS evaluation"); }
+    if (!slEvaluateFeature(context, sl::Feature::eFeatureDLSS, frameIndex)) { log::error("Failed DLSS evaluation"); }
 
     return;
 }

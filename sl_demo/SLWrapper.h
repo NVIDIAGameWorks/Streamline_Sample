@@ -42,6 +42,7 @@
 #include <donut/core/log.h>
 
 #include "sl.h"
+#include "sl_dlss.h"
 
 #define APP_ID 231313132
 
@@ -84,22 +85,30 @@ private:
     sl::DLSSConstants m_dlss_consts;
 
     bool m_dlss_available = false;
+    static nvrhi::GraphicsAPI m_api;
 
     static void logFunctionCallback(sl::LogType type, const char* msg);
-    static sl::Resource allocateResourceCallback(const sl::ResourceDesc* resDesc);
-    static void releaseResourceCallback(sl::Resource* resource);
+    static sl::Resource allocateResourceCallback(const sl::ResourceDesc* resDesc, void* device);
+    static void releaseResourceCallback(sl::Resource* resource, void* device);
 
 public:
     SLWrapper(nvrhi::IDevice* device);
 
-    static void Initialize();
+    static void Initialize(nvrhi::GraphicsAPI api);
     static void Shutdown();
     static bool GetSLInitialized() { return m_sl_initialised; }
 
+    struct DLSSSettings
+    {
+        donut::math::int2 optimalRenderSize;
+        donut::math::int2 minRenderSize;
+        donut::math::int2 maxRenderSize;
+        float sharpness;
+    };
     bool CheckSupportDLSS();
     void SetSLConsts(const sl::Constants& consts, int frameNumber);
     void SetDLSSConsts(const sl::DLSSConstants consts, int frameNumber);
-    void QueryDLSSOptimalSettings(donut::math::int2& outRenderSize, float& sharpness);
+    void QueryDLSSOptimalSettings(DLSSSettings& settings);
     bool GetDLSSAvailable()         { return m_dlss_available;  }
 
     void EvaluateDLSS(

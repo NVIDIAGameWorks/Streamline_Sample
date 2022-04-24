@@ -99,6 +99,11 @@ enum class AntiAliasingMode {
 #endif
 };
 
+enum class RenderingResolutionMode {
+    FIXED,
+    DYNAMIC,
+    COUNT
+};
 
 struct UIData
 {
@@ -118,18 +123,19 @@ struct UIData
     float                               CsmExponent = 4.f;
     std::string                         ScreenshotFileName = "";
     AntiAliasingMode                    AAMode = AntiAliasingMode::TEMPORAL;
-    int2                                renderSize = { 0,0 };
 
 #if USE_SL
     // SL specific parameters
     float                               DLSS_Sharpness = 0.f;
     bool                                DLSS_Supported = false;
     sl::DLSSMode                        DLSS_Mode = sl::DLSSMode::eDLSSModeBalanced;
-    
+    RenderingResolutionMode             DLSS_Resolution_Mode = RenderingResolutionMode::FIXED;
+
     //For history tracking so we can only update the rendersize when needed
     int2                               DLSS_Last_DisplaySize = { 0,0 };
     sl::DLSSMode                       DLSS_Last_Mode = sl::DLSSMode::eDLSSModeOff;
     AntiAliasingMode                   DLSS_Last_AA = AntiAliasingMode::TEMPORAL;
+    bool                               DebugShowFullRenderingBuffer = false;
 #endif
 
     nvrhi::GraphicsAPI                  deviceType;
@@ -176,10 +182,15 @@ private:
     std::unique_ptr<SLWrapper>         m_SLWrapper;
 #endif
     float                               m_PreviousLodBias = 0.f;
-    int2                                m_PreviousRenderSize = {~0, ~0, };
 
     UIData&                             m_ui;
 
+    SLWrapper::DLSSSettings            m_RecommendedSettings;
+
+    int2                               renderingRectSize = { 0, 0 };
+    float                              dynamicResizeTime = 0.0f;
+
+    std::default_random_engine          m_Generator;
 public:
 
     FeatureDemo(DeviceManager* deviceManager, UIData& ui)
@@ -285,6 +296,7 @@ public:
 
     virtual void Animate(float fElapsedTimeSeconds) override
     {
+        dynamicResizeTime += fElapsedTimeSeconds;
         m_Camera.Animate(fElapsedTimeSeconds);
         if(m_ToneMappingPass)
             m_ToneMappingPass->AdvanceFrame(fElapsedTimeSeconds);
@@ -560,16 +572,15 @@ public:
 
         int2 displaySize = int2(windowWidth, windowHeight);
         int2 requiredRendertargetSize = displaySize;
+        if (all(renderingRectSize == 0))
+            renderingRectSize = displaySize;
+        int2 dlssCreationTimeRenderSize = displaySize;
 
         int2 renderOffset   = {0, 0};
         bool preTonemapping = true;
         float lodBias = 0.f;
 
         // Update variables
-
-        if ((m_ui.AAMode != AntiAliasingMode::DLSS)) {
-            m_ui.renderSize = displaySize;
-        }
 
 #ifdef USE_SL
 
@@ -591,42 +602,97 @@ public:
         // If we are using DLSS set its constants
         if ((m_ui.AAMode == AntiAliasingMode::DLSS))
         {
-
-            sl::DLSSConstants dlssConstants = {};
-            dlssConstants.mode = m_ui.DLSS_Mode;
-            dlssConstants.outputWidth = displaySize.x;
-            dlssConstants.outputHeight = displaySize.y;
-            dlssConstants.colorBuffersHDR = sl::Boolean::eTrue;
-            m_SLWrapper->SetDLSSConsts(dlssConstants, m_FrameIndex);
-
+            bool DLSS_dynamic_res = m_ui.DLSS_Resolution_Mode == RenderingResolutionMode::DYNAMIC;
             bool DLSS_resizeRequired = (m_ui.DLSS_Mode != m_ui.DLSS_Last_Mode) || (displaySize.x != m_ui.DLSS_Last_DisplaySize.x) || (displaySize.y != m_ui.DLSS_Last_DisplaySize.y);
 
             // Check if we need to update the rendertarget size.
             if (DLSS_resizeRequired) {
-                m_SLWrapper->QueryDLSSOptimalSettings(m_ui.renderSize, m_ui.DLSS_Sharpness);
+                sl::DLSSConstants dlssConstants = {};
+                dlssConstants.mode = m_ui.DLSS_Mode;
+                dlssConstants.outputWidth = displaySize.x;
+                dlssConstants.outputHeight = displaySize.y;
+                dlssConstants.colorBuffersHDR = sl::Boolean::eTrue;
+                m_SLWrapper->SetDLSSConsts(dlssConstants, m_FrameIndex);
 
-                if (m_ui.renderSize.x <= 0 || m_ui.renderSize.y <= 0) {
+                // Only quality, target width and height matter here
+                m_SLWrapper->QueryDLSSOptimalSettings(m_RecommendedSettings);
+
+                if (m_RecommendedSettings.optimalRenderSize.x <= 0 || m_RecommendedSettings.optimalRenderSize.y <= 0) {
                     m_ui.AAMode = AntiAliasingMode::TEMPORAL;
                     m_ui.DLSS_Mode = sl::DLSSMode::eDLSSModeBalanced;
-                    m_ui.renderSize = displaySize;
+                    renderingRectSize = displaySize;
                 }
                 else {
                     m_ui.DLSS_Last_Mode = m_ui.DLSS_Mode;
                     m_ui.DLSS_Last_DisplaySize = displaySize;
                 }
-
-                lodBias = std::log2f(float(m_ui.renderSize.x) / float(displaySize.x)) - 1.0f;
             }
-            
+
+            float texLodXDimension;
+
+            requiredRendertargetSize = m_RecommendedSettings.maxRenderSize;
+
+            dlssCreationTimeRenderSize = m_RecommendedSettings.optimalRenderSize;
+
+            // in variable ratio mode, pick a random ratio between min and max rendering resolution
+            int2 maxSize = m_RecommendedSettings.maxRenderSize;
+            int2 minSize = m_RecommendedSettings.minRenderSize;
+            if (DLSS_dynamic_res)
+            {
+                // Even if we request dynamic res, it is possible that the DLSS mode has max==min
+                if (any(maxSize != minSize))
+                {
+                    if (dynamicResizeTime > 2.0f)
+                    {
+                        dynamicResizeTime = 0.0f;
+                        std::uniform_int_distribution<int> distributionWidth(minSize.x, maxSize.x);
+                        int newWidth = distributionWidth(m_Generator);
+                        // Height is initially based on width and aspect
+                        int newHeight = (int)(newWidth * (float)displaySize.y / (float)displaySize.x);
+
+                        assert(all(renderingRectSize <= requiredRendertargetSize));
+
+                        // But that height might be too small or too large for the min/max settings of the DLSS
+                        // mode (in theory); skip changing the res if it is out of range.  In practice, this doesn't
+                        // even seem to happen, so this is more of a safety valve
+                        if (newHeight >= minSize.y && newHeight <= maxSize.y)
+                            renderingRectSize = { newWidth , newHeight };
+                    }
+
+                    // For dynamic ratio, we want to choose the minimum rendering size
+                    // to select a Texture LOD that will preserve its sharpness over a large range of rendering resolution.
+                    // Ideally, the texture LOD would be allowed to be variable as well based on the dynamic scale
+                    // but we don't support that here yet.
+                    texLodXDimension = minSize.x;
+
+                    // If the OUTPUT buffer resized or the DLSS mode changed, we need to recreate passes in dynamic mode.
+                    //  In fixed resolution DLSS, this just happens when we change DLSS mode because it causes one of the
+                    // other cases below to hit (likely texLod).
+                    if (DLSS_resizeRequired)
+                        needNewPasses = true;
+                }
+                else
+                {
+                    renderingRectSize = maxSize;
+                    texLodXDimension = renderingRectSize.x;
+                }
+            }
+            else
+            {
+                renderingRectSize = dlssCreationTimeRenderSize;
+                texLodXDimension = renderingRectSize.x;
+            }
+
+            // Use the formula of the DLSS programming guide for the Texture LOD Bias...
+            lodBias = std::log2f(texLodXDimension / displaySize.x) - 1.0f;
         }
 #endif
 
         // Setup Render passes
         {
-            // Here, we intentionally leave the renderTargets oversized: (displaySize, displaySize) instead of (m_ui.renderSize, displaySize), to show the power of sl::Extent
+            // Here, we intentionally leave the renderTargets oversized: (displaySize, displaySize) instead of (renderingRectSize, displaySize), to show the power of sl::Extent
             if (!m_RenderTargets || m_RenderTargets->IsUpdateRequired(displaySize, displaySize, preTonemapping))
             {
-
                 m_RenderTargets = nullptr;
                 m_CommonPasses->ResetBindingCache();
                 m_RenderTargets = std::make_unique<RenderTargets>(GetDevice(), displaySize, displaySize, preTonemapping);
@@ -641,7 +707,7 @@ public:
                 m_PreviousLodBias = lodBias;
             }
 
-            if (SetupView(m_ui.renderSize, renderOffset, preTonemapping))
+            if (SetupView(renderingRectSize, renderOffset, preTonemapping))
             {
                 needNewPasses = true;
             }
@@ -652,15 +718,9 @@ public:
                 needNewPasses = true;
             }
 
-            if (any(m_PreviousRenderSize != m_ui.renderSize))
-            {
-                m_PreviousRenderSize = m_ui.renderSize;
-                needNewPasses = true;
-            }
-
             if (needNewPasses)
             {
-                CreateRenderPasses(m_ui.renderSize, lodBias, exposureResetRequired);
+                CreateRenderPasses(dlssCreationTimeRenderSize, lodBias, exposureResetRequired);
             }
 
             m_ui.ShaderReloadRequested = false;
@@ -740,7 +800,7 @@ public:
         // Bloom pass
         if (m_ui.EnableBloom)
         {
-            float effectiveBloomSigma = m_ui.BloomSigma * (((float)m_ui.renderSize.x) / m_RenderTargets->m_DisplaySize.x);
+            float effectiveBloomSigma = m_ui.BloomSigma * (((float)renderingRectSize.x) / m_RenderTargets->m_DisplaySize.x);
             m_BloomPass->Render(m_CommandList, m_RenderTargets->m_HdrFramebuffer, *m_View, renderColor, effectiveBloomSigma);
         }
 
@@ -801,7 +861,7 @@ public:
                     m_RenderTargets->m_MotionVectors,
                     m_RenderTargets->m_Depth,
                     m_FrameIndex,
-                    m_ui.renderSize);
+                    m_ui.DebugShowFullRenderingBuffer ? m_RecommendedSettings.maxRenderSize : renderingRectSize);
             }
 #endif
             // TAA evaluation
@@ -910,7 +970,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     deviceParams.startFullscreen = false;
     deviceParams.enablePerMonitorDPI = true;
 #ifdef _DEBUG
-    deviceParams.enableDebugRuntime = true;
+    deviceParams.enableDebugRuntime = false;
     deviceParams.enableNvrhiValidationLayer = true;
 #endif
     deviceParams.vsyncEnabled = true;
@@ -927,7 +987,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     std::string windowTitle = "NVIDIA SL DLSS Sample (" + std::string(apiString) + ")";
 
 #ifdef USE_SL
-    SLWrapper::Initialize();
+    SLWrapper::Initialize(api);
 #endif
 
     if (!deviceManager->CreateWindowDeviceAndSwapChain(deviceParams, windowTitle.c_str()))

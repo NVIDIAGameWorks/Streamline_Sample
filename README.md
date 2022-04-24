@@ -33,4 +33,8 @@
 - To swap between d3d11 and d3d12, go to the properties page of sl_demo, Configuration Properties -> Debugging -> Command Arguments. Then put "-d3d11" or "-d3d12" as needed. By default we use d3d12.
 - Currently vulkan is not supported by this sample.
 - If a certain DLSS mode is not available, the sample will revert to TAA.
+- When DLSS is selected for antialiasing, the rendering resolution can be set via the UI to:
+  - "fixed" (to the DLSS mode's recommended value)
+  - "dynamic" (changing once per second to a different resolution of the same aspect ratio that is within the min/max supported range of the selected DLSS quality mode).
+- In DLSS dynamic resolution mode, it is possible to enable a debug rendering mode that shows the size of the source rendering relative to the size of the rendering buffer.  Note that this mode is for debug visualization only; the DLSS quality may be adversely affected.
 

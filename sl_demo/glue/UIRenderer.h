@@ -132,6 +132,29 @@ protected:
                 }
                 ImGui::EndCombo();
             }
+
+            static const char* DLSSResModeNames[] = {
+                "Fixed",
+                "Dynamic"
+            };
+
+            if (ImGui::BeginCombo("DLSS Resolution Mode", DLSSResModeNames[(int)m_ui.DLSS_Resolution_Mode]))
+            {
+                for (int i = 0; i < (int)RenderingResolutionMode::COUNT; ++i)
+                {
+                    bool is_selected = (i == (int)m_ui.DLSS_Resolution_Mode);
+
+                    if (ImGui::Selectable(DLSSResModeNames[i], is_selected))
+                        m_ui.DLSS_Resolution_Mode = (RenderingResolutionMode)i;
+                    if (is_selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            if (m_ui.DLSS_Resolution_Mode == RenderingResolutionMode::DYNAMIC)
+                ImGui::Checkbox("Debug: Show full rendering buffer", &m_ui.DebugShowFullRenderingBuffer);
+            else
+                m_ui.DebugShowFullRenderingBuffer = false;
         }
 #endif
         ImGui::End();
