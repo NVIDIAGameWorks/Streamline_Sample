@@ -91,6 +91,19 @@ private:
     static sl::Resource allocateResourceCallback(const sl::ResourceDesc* resDesc, void* device);
     static void releaseResourceCallback(sl::Resource* resource, void* device);
 
+// SL Interposer Functions
+    static PFunSlInit* slInit;
+    static PFunSlShutdown* slShutdown;
+    static PFunSlSetFeatureEnabled* slSetFeatureEnabled;
+    static PFunSlIsFeatureSupported* slIsFeatureSupported;
+    static PFunSlSetTag* slSetTag;
+    static PFunSlSetConstants* slSetConstants;
+    static PFunSlSetFeatureConstants* slSetFeatureConstants;
+    static PFunSlGetFeatureSettings* slGetFeatureSettings;
+    static PFunSlEvaluateFeature* slEvaluateFeature;
+    static PFunSlAllocateResources* slAllocateResources;
+    static PFunSlFreeResources* slFreeResources;
+
 public:
     SLWrapper(nvrhi::IDevice* device);
 
@@ -106,8 +119,8 @@ public:
         float sharpness;
     };
     bool CheckSupportDLSS();
-    void SetSLConsts(const sl::Constants& consts, int frameNumber);
-    void SetDLSSConsts(const sl::DLSSConstants consts, int frameNumber);
+    void SetSLConsts(const sl::Constants& consts, uint32_t frameNumber, uint32_t id = 0);
+    void SetDLSSConsts(const sl::DLSSConstants consts, uint32_t frameNumber, uint32_t id = 0);
     void QueryDLSSOptimalSettings(DLSSSettings& settings);
     bool GetDLSSAvailable()         { return m_dlss_available;  }
 
@@ -118,6 +131,7 @@ public:
         nvrhi::ITexture* motionVectors,
         nvrhi::ITexture* depth,
         uint32_t frameIndex,
+        uint32_t id,
         donut::math::uint2 renderSize);
 
 };

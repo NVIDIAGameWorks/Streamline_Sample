@@ -17,9 +17,6 @@
 #ifdef _WINDOWS
 #include <ShellScalingApi.h>
 #pragma comment(lib, "shcore.lib")
-#if USE_SL
-#pragma comment(lib, "sl.interposer.lib")
-#endif
 #endif
 
 #include <GLFW/glfw3.h>

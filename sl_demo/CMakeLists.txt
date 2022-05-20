@@ -1,6 +1,7 @@
-add_executable(sl_demo WIN32 DemoMain.cpp SLWrapper.h SLWrapper.cpp glue/RenderTargets.h glue/UIRenderer.h)
+add_executable(sl_demo WIN32 DemoMain.cpp SLWrapper.h SLWrapper.cpp glue/RenderTargets.h glue/UIRenderer.h secureLoadLibrary.h secureLoadLibrary.cpp)
 target_link_libraries(sl_demo donut_core donut_engine donut_render donut_app)
 target_include_directories(sl_demo PUBLIC . ./glue)
+target_link_options(sl_demo PUBLIC "/DELAYLOAD:sl.interposer.dll")
 
 
 set(__sl_demo_libs "")

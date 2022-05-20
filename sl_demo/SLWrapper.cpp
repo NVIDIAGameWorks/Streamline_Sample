@@ -51,6 +51,7 @@
 #include <d3d12.h>
 #include <nvrhi/d3d12/d3d12.h>
 #endif
+#include <secureLoadLibrary.h>
 
 using namespace donut;
 using namespace donut::math;
@@ -59,6 +60,19 @@ using namespace donut::engine;
 bool SLWrapper::m_sl_initialised = false;
 nvrhi::IDevice* SLWrapper::m_Device = nullptr;
 nvrhi::GraphicsAPI SLWrapper::m_api = nvrhi::GraphicsAPI::D3D12;
+
+// SL Interposer Functions
+PFunSlInit* SLWrapper::slInit{};
+PFunSlShutdown* SLWrapper::slShutdown{};
+PFunSlSetFeatureEnabled* SLWrapper::slSetFeatureEnabled{};
+PFunSlIsFeatureSupported* SLWrapper::slIsFeatureSupported{};
+PFunSlSetTag* SLWrapper::slSetTag{};
+PFunSlSetConstants* SLWrapper::slSetConstants{};
+PFunSlSetFeatureConstants* SLWrapper::slSetFeatureConstants{};
+PFunSlGetFeatureSettings* SLWrapper::slGetFeatureSettings{};
+PFunSlEvaluateFeature* SLWrapper::slEvaluateFeature{};
+PFunSlAllocateResources* SLWrapper::slAllocateResources{};
+PFunSlFreeResources* SLWrapper::slFreeResources{};
 
 SLWrapper::SLWrapper(nvrhi::IDevice* device)
 {
@@ -88,7 +102,10 @@ void SLWrapper::logFunctionCallback(sl::LogType type, const char* msg) {
 
 void SLWrapper::Initialize(nvrhi::GraphicsAPI api) 
 {
-     sl::Preferences pref;
+    if (m_sl_initialised)
+        return;
+    
+    sl::Preferences pref;
      
      m_api = api;
 
@@ -110,6 +127,34 @@ void SLWrapper::Initialize(nvrhi::GraphicsAPI api)
     pref.logLevel = sl::LogLevel::eLogLevelOff;
 #endif
 
+    // Must explicitly enable features; enabling only DLSS
+    sl::Preferences1 ext;
+    sl::Feature featuresToEnable[] = { sl::eFeatureDLSS };
+    ext.featuresToEnable = featuresToEnable;
+    ext.numFeaturesToEnable = 1;
+
+    pref.ext = &ext;
+
+    HMODULE interposer = sl::security::loadLibrary(L"sl.interposer.dll");
+    if (!interposer)
+    {
+        donut::log::error("Unable to load Streamline Interposer");
+        return;
+    }
+
+	// Hook up all of the functions exported by the SL Interposer Library
+    slInit = (PFunSlInit*)GetProcAddress(interposer, "slInit");
+    slShutdown = (PFunSlShutdown*)GetProcAddress(interposer, "slShutdown");
+    slSetFeatureEnabled = (PFunSlSetFeatureEnabled*)GetProcAddress(interposer, "slSetFeatureEnabled");
+    slIsFeatureSupported = (PFunSlIsFeatureSupported*)GetProcAddress(interposer, "slIsFeatureSupported");
+    slSetTag = (PFunSlSetTag*)GetProcAddress(interposer, "slSetTag");
+    slSetConstants = (PFunSlSetConstants*)GetProcAddress(interposer, "slSetConstants");
+    slSetFeatureConstants = (PFunSlSetFeatureConstants*)GetProcAddress(interposer, "slSetFeatureConstants");
+    slGetFeatureSettings = (PFunSlGetFeatureSettings*)GetProcAddress(interposer, "slGetFeatureSettings");
+    slEvaluateFeature = (PFunSlEvaluateFeature*)GetProcAddress(interposer, "slEvaluateFeature");
+    slAllocateResources = (PFunSlAllocateResources*)GetProcAddress(interposer, "slAllocateResources");
+    slFreeResources = (PFunSlFreeResources*)GetProcAddress(interposer, "slFreeResources");
+
     m_sl_initialised = slInit(pref, APP_ID);
     if (!m_sl_initialised) log::error("Failed to initialse SL.");
 }
@@ -123,22 +168,40 @@ void SLWrapper::Shutdown()
     }
 }
 
-void SLWrapper::SetSLConsts(const sl::Constants& consts, int frameNumber) {
-    if (!m_sl_initialised) log::error("SL not initialised.");
+void SLWrapper::SetSLConsts(const sl::Constants& consts, uint32_t frameNumber, uint32_t id) {
+    if (!m_sl_initialised)
+    {
+        log::error("SL not initialised.");
+        return;
+    }
     m_sl_consts = consts;
-    if (!slSetConstants(m_sl_consts, frameNumber)) log::error("Failed to set SL constants.");
+    if (!slSetConstants(m_sl_consts, frameNumber, id))
+    {
+        log::error("Failed to set SL constants.");
+    }
 }
 
-void SLWrapper::SetDLSSConsts(const sl::DLSSConstants consts, int frameNumber)
+void SLWrapper::SetDLSSConsts(const sl::DLSSConstants consts, uint32_t frameNumber, uint32_t id)
 {
-    if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
+    if (!m_sl_initialised || !m_dlss_available)
+    {
+        log::error("SL not initialised or DLSS not available.");
+        return;
+    }
     m_dlss_consts = consts;
-    if (!slSetFeatureConstants(sl::eFeatureDLSS, &m_dlss_consts, frameNumber)) log::error("Failed to set DLSS constants.");
+    if (!slSetFeatureConstants(sl::eFeatureDLSS, &m_dlss_consts, frameNumber, id))
+    {
+        log::error("Failed to set DLSS constants.");
+    }
 
 }
 
 void SLWrapper::QueryDLSSOptimalSettings(DLSSSettings& settings) {
-    if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
+    if (!m_sl_initialised || !m_dlss_available)
+    {
+        log::error("SL not initialised or DLSS not available.");
+        return;
+    }
 
     sl::DLSSSettings dlssSettings = {};
     sl::DLSSSettings1 dlssSettings1 = {};
@@ -156,9 +219,13 @@ void SLWrapper::QueryDLSSOptimalSettings(DLSSSettings& settings) {
 }
 
 bool SLWrapper::CheckSupportDLSS() {
-    if (!m_sl_initialised) log::error("SL not initialised.");
+    if (!m_sl_initialised)
+    {
+        log::error("SL not initialised.");
+        return false;
+    }
 
-    bool support = slIsFeatureSupported(sl::eFeatureDLSS);
+    bool support = slIsFeatureSupported(sl::eFeatureDLSS, nullptr);
     if (support) log::info("DLSS is supported on this system.");
     else log::warning("DLSS is not supported on this system.");
     return support;
@@ -261,12 +328,13 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
             nvrhi::ITexture* motionVectors,
             nvrhi::ITexture* depth,
             uint32_t frameIndex,
+            uint32_t id,
             uint2 renderSize)
 {
     if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
     if (m_Device == nullptr) log::error("No device available.");
     
-    if (!slSetFeatureConstants(sl::Feature::eFeatureDLSS, &m_dlss_consts, frameIndex)) log::error("Failed to set DLSS features.");
+    if (!slSetFeatureConstants(sl::Feature::eFeatureDLSS, &m_dlss_consts, frameIndex, id)) log::error("Failed to set DLSS features.");
 
     void* context;
     bool success = true;
@@ -311,7 +379,7 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
 
     if (!success) log::error("Failed DLSS tag setting");
 
-    if (!slEvaluateFeature(context, sl::Feature::eFeatureDLSS, frameIndex)) { log::error("Failed DLSS evaluation"); }
+    if (!slEvaluateFeature(context, sl::Feature::eFeatureDLSS, frameIndex, id)) { log::error("Failed DLSS evaluation"); }
 
     return;
 }

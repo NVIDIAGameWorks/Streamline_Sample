@@ -177,6 +177,7 @@ private:
     float3                              m_AmbientTop = 0.f;
     float3                              m_AmbientBottom = 0.f;
     int                                 m_FrameIndex = 0;
+    int                                 m_Id = 0;
 
 #if USE_SL
     std::unique_ptr<SLWrapper>         m_SLWrapper;
@@ -439,6 +440,7 @@ public:
 
     void CreateRenderPasses(donut::math::int2 creationTimeRenderSize, float lodBias, bool& exposureResetRequired)
     {
+        GetDevice()->waitForIdle();
         uint32_t motionVectorStencilMask = 0x01;
 
         nvrhi::SamplerDesc samplerdescPoint      = m_CommonPasses->m_PointClampSampler->GetDesc();
@@ -663,7 +665,7 @@ public:
                     // to select a Texture LOD that will preserve its sharpness over a large range of rendering resolution.
                     // Ideally, the texture LOD would be allowed to be variable as well based on the dynamic scale
                     // but we don't support that here yet.
-                    texLodXDimension = minSize.x;
+                    texLodXDimension = static_cast<float>(minSize.x);
 
                     // If the OUTPUT buffer resized or the DLSS mode changed, we need to recreate passes in dynamic mode.
                     //  In fixed resolution DLSS, this just happens when we change DLSS mode because it causes one of the
@@ -674,13 +676,13 @@ public:
                 else
                 {
                     renderingRectSize = maxSize;
-                    texLodXDimension = renderingRectSize.x;
+                    texLodXDimension = static_cast<float>(renderingRectSize.x);
                 }
             }
             else
             {
                 renderingRectSize = dlssCreationTimeRenderSize;
-                texLodXDimension = renderingRectSize.x;
+                texLodXDimension = static_cast<float>(renderingRectSize.x);
             }
 
             // Use the formula of the DLSS programming guide for the Texture LOD Bias...
@@ -861,6 +863,7 @@ public:
                     m_RenderTargets->m_MotionVectors,
                     m_RenderTargets->m_Depth,
                     m_FrameIndex,
+                    m_Id,
                     m_ui.DebugShowFullRenderingBuffer ? m_RecommendedSettings.maxRenderSize : renderingRectSize);
             }
 #endif
