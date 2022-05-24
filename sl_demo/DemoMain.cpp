@@ -91,9 +91,9 @@ using namespace donut::render;
 constexpr float OPTIMAL_RATIO  = -1.0f; // Use the scaling ratio that the DLSS recommends
 constexpr size_t NUM_OFFSET_SEQUENCES = 64; // Use a large number of Halton sequence offsets to accomodate large scaling ratios.
 
-enum class AntiAliasingMode { 
-    NONE, 
-    TEMPORAL, 
+enum class AntiAliasingMode {
+    NONE,
+    TEMPORAL,
 #ifdef USE_SL
     DLSS,
 #endif
@@ -186,7 +186,9 @@ private:
 
     UIData&                             m_ui;
 
+#if USE_SL
     SLWrapper::DLSSSettings            m_RecommendedSettings;
+#endif
 
     int2                               renderingRectSize = { 0, 0 };
     float                              dynamicResizeTime = 0.0f;
@@ -209,10 +211,10 @@ public:
 #if USE_SL
         m_SLWrapper = std::make_unique<SLWrapper>(GetDevice());
         m_ui.DLSS_Supported = m_SLWrapper->GetDLSSAvailable();
-#endif
 
         if (m_ui.DLSS_Supported) log::info("DLSS is supported on this system.");
         else log::warning("DLSS is not supported on this system.");
+#endif
 
         std::shared_ptr<NativeFileSystem> nativeFS = std::make_shared<NativeFileSystem>();
 
@@ -772,11 +774,11 @@ public:
             m_ToneMappingPass->ResetExposure(m_CommandList, 8.f);
 
         // GBuffer Pass
-        RenderCompositeView(m_CommandList, 
-            m_View.get(), m_ViewPrevious.get(), 
-            *m_RenderTargets->m_GBufferFramebuffer, 
-            *m_OpaqueDrawStrategy, 
-            *m_GBufferPass, 
+        RenderCompositeView(m_CommandList,
+            m_View.get(), m_ViewPrevious.get(),
+            *m_RenderTargets->m_GBufferFramebuffer,
+            *m_OpaqueDrawStrategy,
+            *m_GBufferPass,
             "GBufferFill",
             m_ui.EnableMaterialEvents);
 
@@ -858,7 +860,7 @@ public:
             if (m_ui.AAMode ==AntiAliasingMode::DLSS)
             {
                 m_SLWrapper->EvaluateDLSS(m_CommandList,
-                    m_RenderTargets->m_ResolvedColor, 
+                    m_RenderTargets->m_ResolvedColor,
                     renderColor,
                     m_RenderTargets->m_MotionVectors,
                     m_RenderTargets->m_Depth,
@@ -910,9 +912,9 @@ public:
 
             AdvanceFrame();
 
-            GetDeviceManager()->SetVsyncEnabled(m_ui.EnableVsync); 
+            GetDeviceManager()->SetVsyncEnabled(m_ui.EnableVsync);
         }
-        
+
     }
 
     std::shared_ptr<ShaderFactory> GetShaderFactory()
@@ -1023,6 +1025,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     SLWrapper::Shutdown();
 #endif
 
-    
+
     return 0;
 }

@@ -100,8 +100,8 @@ protected:
         ImGui::Text("API: %s", name.c_str());
 
         ImGui::Separator();
-        ImGui::Text("DLSS_Supported: %s", m_ui.DLSS_Supported ? "yes":"no");
 #ifdef USE_SL
+        ImGui::Text("DLSS_Supported: %s", m_ui.DLSS_Supported ? "yes":"no");
         ImGui::Combo("AA Mode", (int*)&m_ui.AAMode, "None\0TemporalAA\0DLSS\0");
 #else
         ImGui::Combo("AA Mode", (int*)&m_ui.AAMode, "None\0TemporalAA\0");
