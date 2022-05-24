@@ -18,7 +18,7 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/ 
+*/
 #define SL_WINDOWS
 #ifdef SL_WINDOWS
 
@@ -41,7 +41,9 @@
 
 #include <inttypes.h>
 
+#if USE_SL
 #include "sl.h"
+#endif
 #include <donut/core/log.h>
 
 //#include "source/core/sl.log/log.h"
@@ -185,7 +187,7 @@ bool isSignedByNVIDIA(const wchar_t* pathToFile)
     HCRYPTMSG hMsg = NULL;
     PCMSG_SIGNER_INFO pSignerInfo = NULL;
     DWORD dwSignerInfo;
-    
+
     if (!pfnCertOpenStore)
     {
         // We only support Win10+ so we can search for module in system32 directly
@@ -441,15 +443,15 @@ bool verifyEmbeddedSignature(const wchar_t* pathToFile)
     WinTrustData.hWVTStateData = NULL;
     // Not used.
     WinTrustData.pwszURLReference = NULL;
-    // This is not applicable if there is no UI because it changes 
-    // the UI to accommodate running applications instead of 
+    // This is not applicable if there is no UI because it changes
+    // the UI to accommodate running applications instead of
     // installing applications.
     WinTrustData.dwUIContext = 0;
     // Set pFile.
     WinTrustData.pFile = &FileData;
 
     // First verify the primary signature (index 0) to determine how many secondary signatures
-    // are present. We use WSS_VERIFY_SPECIFIC and dwIndex to do this, also setting 
+    // are present. We use WSS_VERIFY_SPECIFIC and dwIndex to do this, also setting
     // WSS_GET_SECONDARY_SIG_COUNT to have the number of secondary signatures returned.
     WINTRUST_SIGNATURE_SETTINGS SignatureSettings = {};
     CERT_STRONG_SIGN_PARA StrongSigPolicy = {};
@@ -465,7 +467,7 @@ bool verifyEmbeddedSignature(const wchar_t* pathToFile)
 
     // WinVerifyTrust verifies signatures as specified by the GUID  and Wintrust_Data.
     lStatus = pfnWinVerifyTrust(NULL, &WVTPolicyGUID, &WinTrustData);
-    
+
     // First signature must be validated by the OS
     valid = lStatus == ERROR_SUCCESS;
     if (!valid)
