@@ -124,15 +124,17 @@ public:
     void QueryDLSSOptimalSettings(DLSSSettings& settings);
     bool GetDLSSAvailable()         { return m_dlss_available;  }
 
-    void EvaluateDLSS(
-        nvrhi::ICommandList* commandList,
-        nvrhi::ITexture* unresolvedColor,
+    void TagSL(nvrhi::ITexture* unresolvedColor,
         nvrhi::ITexture* resolvedColor,
         nvrhi::ITexture* motionVectors,
         nvrhi::ITexture* depth,
         uint32_t frameIndex,
         uint32_t id,
         donut::math::uint2 renderSize);
+    void EvaluateDLSS(
+        nvrhi::ICommandList* commandList,
+        uint32_t frameIndex,
+        uint32_t id);
 
 };
 

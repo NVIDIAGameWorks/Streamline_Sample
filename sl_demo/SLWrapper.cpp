@@ -128,12 +128,9 @@ void SLWrapper::Initialize(nvrhi::GraphicsAPI api)
 #endif
 
     // Must explicitly enable features; enabling only DLSS
-    sl::Preferences1 ext;
     sl::Feature featuresToEnable[] = { sl::eFeatureDLSS };
-    ext.featuresToEnable = featuresToEnable;
-    ext.numFeaturesToEnable = 1;
-
-    pref.ext = &ext;
+    pref.featuresToLoad = featuresToEnable;
+    pref.numFeaturesToLoad = 1;
 
     HMODULE interposer = sl::security::loadLibrary(L"sl.interposer.dll");
     if (!interposer)
@@ -322,32 +319,28 @@ void SLWrapper::releaseResourceCallback(sl::Resource * resource, void* device)
     }
 };
 
-void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
-            nvrhi::ITexture* unresolvedColor,
-            nvrhi::ITexture* resolvedColor,
-            nvrhi::ITexture* motionVectors,
-            nvrhi::ITexture* depth,
-            uint32_t frameIndex,
-            uint32_t id,
-            uint2 renderSize)
+void SLWrapper::TagSL(nvrhi::ITexture* unresolvedColor,
+    nvrhi::ITexture* resolvedColor,
+    nvrhi::ITexture* motionVectors,
+    nvrhi::ITexture* depth,
+    uint32_t frameIndex,
+    uint32_t id,
+    uint2 renderSize)
 {
     if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
     if (m_Device == nullptr) log::error("No device available.");
-    
+
     if (!slSetFeatureConstants(sl::Feature::eFeatureDLSS, &m_dlss_consts, frameIndex, id)) log::error("Failed to set DLSS features.");
 
-    void* context;
     bool success = true;
-    sl::Extent renderExtent{ 0,0, 
-        renderSize.x ? renderSize.x : resolvedColor->GetDesc().width, 
+    sl::Extent renderExtent{ 0,0,
+        renderSize.x ? renderSize.x : resolvedColor->GetDesc().width,
         renderSize.y ? renderSize.y : resolvedColor->GetDesc().height };
     sl::Extent fullExtent{ 0,0, unresolvedColor->GetDesc().width, unresolvedColor->GetDesc().height };
 
 #if USE_DX11
     if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
     {
-        context = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
-
         sl::Resource unresolvedColorResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, unresolvedColor->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource) };
         sl::Resource motionVectorsResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, motionVectors->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource) };
         sl::Resource resolvedColorResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, resolvedColor->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource) };
@@ -363,8 +356,6 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
 #ifdef USE_DX12
     if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
     {
-        context = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
-
         sl::Resource unresolvedColorResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, unresolvedColor->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource) };
         sl::Resource motionVectorsResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, motionVectors->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource) };
         sl::Resource resolvedColorResource = sl::Resource{ sl::ResourceType::eResourceTypeTex2d, resolvedColor->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource) };
@@ -378,6 +369,26 @@ void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList,
 #endif
 
     if (!success) log::error("Failed DLSS tag setting");
+}
+
+void SLWrapper::EvaluateDLSS(nvrhi::ICommandList * commandList,
+    uint32_t frameIndex,
+    uint32_t id)
+{
+    if (!m_sl_initialised || !m_dlss_available) log::error("SL not initialised or DLSS not available.");
+    if (m_Device == nullptr) log::error("No device available.");
+
+    void* context;
+
+#if USE_DX11
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
+        context = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
+#endif
+
+#ifdef USE_DX12
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
+        context = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
+#endif
 
     if (!slEvaluateFeature(context, sl::Feature::eFeatureDLSS, frameIndex, id)) { log::error("Failed DLSS evaluation"); }
 

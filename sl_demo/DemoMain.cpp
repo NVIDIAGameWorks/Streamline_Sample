@@ -604,18 +604,18 @@ public:
         // If we are using DLSS set its constants
         if ((m_ui.AAMode == AntiAliasingMode::DLSS))
         {
+            sl::DLSSConstants dlssConstants = {};
+            dlssConstants.mode = m_ui.DLSS_Mode;
+            dlssConstants.outputWidth = displaySize.x;
+            dlssConstants.outputHeight = displaySize.y;
+            dlssConstants.colorBuffersHDR = sl::Boolean::eTrue;
+            m_SLWrapper->SetDLSSConsts(dlssConstants, m_FrameIndex);
+
             bool DLSS_dynamic_res = m_ui.DLSS_Resolution_Mode == RenderingResolutionMode::DYNAMIC;
             bool DLSS_resizeRequired = (m_ui.DLSS_Mode != m_ui.DLSS_Last_Mode) || (displaySize.x != m_ui.DLSS_Last_DisplaySize.x) || (displaySize.y != m_ui.DLSS_Last_DisplaySize.y);
 
             // Check if we need to update the rendertarget size.
             if (DLSS_resizeRequired) {
-                sl::DLSSConstants dlssConstants = {};
-                dlssConstants.mode = m_ui.DLSS_Mode;
-                dlssConstants.outputWidth = displaySize.x;
-                dlssConstants.outputHeight = displaySize.y;
-                dlssConstants.colorBuffersHDR = sl::Boolean::eTrue;
-                m_SLWrapper->SetDLSSConsts(dlssConstants, m_FrameIndex);
-
                 // Only quality, target width and height matter here
                 m_SLWrapper->QueryDLSSOptimalSettings(m_RecommendedSettings);
 
@@ -807,7 +807,7 @@ public:
         }
 
 #ifdef USE_SL
-        // This section of code updates the sl constants. If SL is being used, it must be done regardless of whether we use the plugins.
+        // This section of code updates the sl constants and tagging. If SL is being used, it must be done regardless of whether we use the plugins.
         {
             constexpr float zNear = 0.1f;
             constexpr float zFar = 200.f;
@@ -847,6 +847,14 @@ public:
             slConstants.motionVectors3D = sl::Boolean::eFalse;
 
             m_SLWrapper->SetSLConsts(slConstants, m_FrameIndex);
+
+            m_SLWrapper->TagSL(m_RenderTargets->m_ResolvedColor,
+                renderColor,
+                m_RenderTargets->m_MotionVectors,
+                m_RenderTargets->m_Depth,
+                m_FrameIndex,
+                m_Id,
+                m_ui.DebugShowFullRenderingBuffer ? m_RecommendedSettings.maxRenderSize : renderingRectSize);
         }
 #endif
 
@@ -857,14 +865,7 @@ public:
             // DLSS Evaluation
             if (m_ui.AAMode ==AntiAliasingMode::DLSS)
             {
-                m_SLWrapper->EvaluateDLSS(m_CommandList,
-                    m_RenderTargets->m_ResolvedColor, 
-                    renderColor,
-                    m_RenderTargets->m_MotionVectors,
-                    m_RenderTargets->m_Depth,
-                    m_FrameIndex,
-                    m_Id,
-                    m_ui.DebugShowFullRenderingBuffer ? m_RecommendedSettings.maxRenderSize : renderingRectSize);
+                m_SLWrapper->EvaluateDLSS(m_CommandList, m_FrameIndex, m_Id);
             }
 #endif
             // TAA evaluation

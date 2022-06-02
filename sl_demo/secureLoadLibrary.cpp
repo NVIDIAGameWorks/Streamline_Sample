@@ -50,6 +50,7 @@
 #include "secureLoadLibrary.h"
 
 #ifdef SL_WINDOWS
+//#define SL_PRODUCTION
 
 #define GetProc(hModule, procName, proc) (((NULL == proc) && (NULL == (*((FARPROC*)&proc) = GetProcAddress(hModule, procName)))) ? FALSE : TRUE)
 
