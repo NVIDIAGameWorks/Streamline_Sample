@@ -1,0 +1,29 @@
+Streamline NDA SDK Sample 2.0.0 Release Notes
+
+Notes:
+  - This version of the sample adds DLSS-G support to the public repo
+  - This version has been extensively rewritten for SL 2.0 and to add support for a wider range of DLSSv3 features.
+
+Known Issues:
+  - With all DLSS features enabled, switching to fullscreen via Alt-Enter can cause a hang.  This is being tracked: however, it seems limited to the sample, which runs at a high frame rate, higher than any game.
+
+Streamline SDK Sample 1.1.2 Release Notes
+
+Notes:
+  - The sample has been updated to the latest SL 1.1.2 SDK APIs.
+  - Full Reflex support has been added to the sample.
+  - SL DLL sign-checking has been expanded, and the new -noSigCheck command-line option has been added, which allows the user to disable the checking even in release builds
+  - The pre-UI color buffer is now copied and tagged
+  - When DLSS is off, we now correctly set the mode to off in the plugin settings, rather than simply not calling the evaluate function.
+
+Streamline SDK Sample 1.1.1 Release Notes
+
+Notes:
+  - In this version, the FPS Cap has been enabled at 60Hz by default because the sample runs at such a high frame rate on modern GPUs.  This can be changed or disabled via the UI if desired.
+  - The UI for changing the DLSS resolution in dynamic mode has been switched from a 2 sec timer to a button in the UI to trigger the size change
+  - The sample now calls Reflex present markers.  See the sample code for details and limitations of these new markers.
+  - VSync is now off by default.  To enable it, run with the command-line option `-vsync`
+
+Streamline SDK Sample 1.1.0 Release Notes
+
+  - First release

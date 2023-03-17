@@ -1,88 +1,33 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 
-#include <vector>
-#include <deque>
-#include <forward_list>
-#include <list>
-#include <set>
-#include <unordered_set>
-#include <map>
-#include <unordered_map>
-#include <string>
 #include <array>
-#include <initializer_list>
-
 #include <assert.h>
-
-#include <nvrhi/common/alloc.h>
-
-// defines common std container and string types that use
-// NVRHI's HeapContainerAllocator to allocate/free memory
+#include <cstddef>
+#include <cstdint>
 
 namespace nvrhi {
-
-template <class T>
-using vector = std::vector<T, HeapContainerAllocator<T>>;
-
-template <class T>
-using deque = std::deque<T, HeapContainerAllocator<T>>;
-
-template <class T>
-using forward_list = std::forward_list<T, HeapContainerAllocator<T>>;
-
-template <class T>
-using list = std::list<T, HeapContainerAllocator<T>>;
-
-template <class Key,
-          class Compare = std::less<Key>>
-using set = std::set<Key, Compare, HeapContainerAllocator<Key>>;
-
-template <class Key,
-          class Hash = std::hash<Key>,
-          class KeyEqual = std::equal_to<Key>>
-using unordered_set = std::unordered_set<Key, Hash, KeyEqual, HeapContainerAllocator<Key>>;
-
-template <class Key,
-          class Compare = std::less<Key>>
-using multiset = std::multiset<Key, Compare, HeapContainerAllocator<Key>>;
-
-template <class Key,
-          class Hash = std::hash<Key>,
-          class KeyEqual = std::equal_to<Key>>
-using unordered_multiset = std::unordered_multiset<Key, Hash, KeyEqual, HeapContainerAllocator<Key>>;
-
-template <class Key,
-          class T,
-          class Compare = std::less<Key>>
-using map = std::map<Key, T, Compare, HeapContainerAllocator<std::pair<const Key, T>>>;
-
-template <class Key,
-          class T,
-          class Hash = std::hash<Key>,
-          class KeyEqual = std::equal_to<Key>>
-using unordered_map = std::unordered_map<Key, T, Hash, KeyEqual, HeapContainerAllocator<std::pair<const Key, T>>>;
-
-template <class Key,
-          class T,
-          class Compare = std::less<Key>>
-using multimap = std::multimap<Key, T, Compare, HeapContainerAllocator<std::pair<const Key, T>>>;
-
-template <class Key,
-          class T,
-          class Hash = std::hash<Key>,
-          class KeyEqual = std::equal_to<Key>>
-using unordered_multimap = std::unordered_multimap<Key, T, Hash, KeyEqual, HeapContainerAllocator<std::pair<const Key, T>>>;
-
-
-// defines basic string types that allocate through HeapContainerAllocator
-template <class CharT,
-          class Traits = std::char_traits<CharT>>
-using basic_string = std::basic_string<CharT, Traits, HeapContainerAllocator<CharT>>;
-
-using string = basic_string<char>;
-using wstring = basic_string<wchar_t>;
-using u16string = basic_string<char16_t>;
-using u32string = basic_string<char32_t>;
 
 // a static vector is a vector with a capacity defined at compile-time
 template <typename T, uint32_t _max_elements>
@@ -111,7 +56,7 @@ struct static_vector : private std::array<T, _max_elements>
         : base()
         , current_size(size)
     {
-        assert(size < max_elements);
+        assert(size <= max_elements);
     }
 
     static_vector(const static_vector& other) = default;

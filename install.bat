@@ -1,0 +1,1 @@
+cmake --install _build

@@ -1,3 +1,49 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
+/*
+License for Dear ImGui
+
+Copyright (c) 2014-2019 Omar Cornut
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 #include <stddef.h>
 
 #include <imgui.h>
@@ -32,28 +78,23 @@ bool ImGui_NVRHI::createFontTexture(nvrhi::ICommandList* commandList)
 
         fontTexture = renderer->createTexture(desc);
 
-        commandList->beginTrackingTextureState(fontTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::COMMON);
+        commandList->beginTrackingTextureState(fontTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
 
         if (fontTexture == nullptr)
             return false;
 
         commandList->writeTexture(fontTexture, 0, 0, pixels, width * 4);
 
-        commandList->endTrackingTextureState(fontTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::SHADER_RESOURCE, true);
+        commandList->setPermanentTextureState(fontTexture, nvrhi::ResourceStates::ShaderResource);
+        commandList->commitBarriers();
 
         io.Fonts->TexID = fontTexture;
     }
 
     {
-        nvrhi::SamplerDesc desc;
-        desc.wrapMode[0] = nvrhi::SamplerDesc::WRAP_MODE_WRAP;
-        desc.wrapMode[1] = nvrhi::SamplerDesc::WRAP_MODE_WRAP;
-        desc.wrapMode[2] = nvrhi::SamplerDesc::WRAP_MODE_WRAP;
-        desc.mipBias = 0.0;
-        desc.anisotropy = 1.0;
-        desc.minFilter = true;
-        desc.magFilter = true;
-        desc.mipFilter = true;
+        const auto desc = nvrhi::SamplerDesc()
+            .setAllAddressModes(nvrhi::SamplerAddressMode::Wrap)
+            .setAllFilters(true);
 
         fontSampler = renderer->createSampler(desc);
 
@@ -72,7 +113,7 @@ bool ImGui_NVRHI::init(nvrhi::DeviceHandle renderer, std::shared_ptr<ShaderFacto
 
     m_commandList->open();
     
-    vertexShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "imgui_vertex", "main", nullptr, nvrhi::ShaderType::SHADER_VERTEX);
+    vertexShader = shaderFactory->CreateShader("donut/imgui_vertex", "main", nullptr, nvrhi::ShaderType::Vertex);
     if (vertexShader == nullptr)
     {
         printf("error creating NVRHI vertex shader object\n");
@@ -80,7 +121,7 @@ bool ImGui_NVRHI::init(nvrhi::DeviceHandle renderer, std::shared_ptr<ShaderFacto
         return false;
     }
 
-    pixelShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "imgui_pixel", "main", nullptr, nvrhi::ShaderType::SHADER_PIXEL);
+    pixelShader = shaderFactory->CreateShader("donut/imgui_pixel", "main", nullptr, nvrhi::ShaderType::Pixel);
     if (pixelShader == nullptr)
     {
         printf("error creating NVRHI pixel shader object\n");
@@ -97,16 +138,6 @@ bool ImGui_NVRHI::init(nvrhi::DeviceHandle renderer, std::shared_ptr<ShaderFacto
 
     shaderAttribLayout = renderer->createInputLayout(vertexAttribLayout, sizeof(vertexAttribLayout) / sizeof(vertexAttribLayout[0]), vertexShader);
 
-    // create constant buffer
-    {
-        nvrhi::BufferDesc desc;
-        desc.byteSize = sizeof(VERTEX_CONSTANT_BUFFER);
-        desc.isConstantBuffer = true;
-        desc.debugName = "IMGui constant buffer";
-
-        constantBuffer = renderer->createBuffer(desc);
-    }
-
     // create font texture
     if (!createFontTexture(m_commandList))
     {
@@ -116,26 +147,23 @@ bool ImGui_NVRHI::init(nvrhi::DeviceHandle renderer, std::shared_ptr<ShaderFacto
     // create PSO
     {
         nvrhi::BlendState blendState;
-        blendState.blendEnable[0] = true;
-        blendState.srcBlend[0] = nvrhi::BlendState::BLEND_SRC_ALPHA;
-        blendState.destBlend[0] = nvrhi::BlendState::BLEND_INV_SRC_ALPHA;
-        blendState.blendOp[0] = nvrhi::BlendState::BLEND_OP_ADD;
-        blendState.srcBlendAlpha[0] = nvrhi::BlendState::BLEND_INV_SRC_ALPHA;
-        blendState.destBlendAlpha[0] = nvrhi::BlendState::BLEND_ZERO;
-        blendState.blendOpAlpha[0] = nvrhi::BlendState::BLEND_OP_ADD;
-        blendState.colorWriteEnable[0] = nvrhi::BlendState::COLOR_MASK_ALL;
+        blendState.targets[0].setBlendEnable(true)
+            .setSrcBlend(nvrhi::BlendFactor::SrcAlpha)
+            .setDestBlend(nvrhi::BlendFactor::InvSrcAlpha)
+            .setSrcBlendAlpha(nvrhi::BlendFactor::InvSrcAlpha)
+            .setDestBlendAlpha(nvrhi::BlendFactor::Zero);
 
-        nvrhi::RasterState rasterState;
-        rasterState.fillMode = nvrhi::RasterState::FILL_SOLID;
-        rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        rasterState.scissorEnable = true;
-        rasterState.depthClipEnable = true;
+        auto rasterState = nvrhi::RasterState()
+            .setFillSolid()
+            .setCullNone()
+            .setScissorEnable(true)
+            .setDepthClipEnable(true);
 
-        nvrhi::DepthStencilState depthStencilState;
-        depthStencilState.depthEnable = false;
-        depthStencilState.depthWriteMask = nvrhi::DepthStencilState::DEPTH_WRITE_MASK_ALL;
-        depthStencilState.depthFunc = nvrhi::DepthStencilState::COMPARISON_ALWAYS;
-        depthStencilState.stencilEnable = false;
+        auto depthStencilState = nvrhi::DepthStencilState()
+            .disableDepthTest()
+            .enableDepthWrite()
+            .disableStencil()
+            .setDepthFunc(nvrhi::ComparisonFunc::Always);
 
         nvrhi::RenderState renderState;
         renderState.blendState = blendState;
@@ -143,16 +171,15 @@ bool ImGui_NVRHI::init(nvrhi::DeviceHandle renderer, std::shared_ptr<ShaderFacto
         renderState.rasterState = rasterState;
 
         nvrhi::BindingLayoutDesc layoutDesc;
-        layoutDesc.VS = { 
-            { 0, nvrhi::ResourceType::ConstantBuffer } 
-        };
-        layoutDesc.PS = { 
-            { 0, nvrhi::ResourceType::Texture_SRV },
-            { 0, nvrhi::ResourceType::Sampler } 
+        layoutDesc.visibility = nvrhi::ShaderType::All;
+        layoutDesc.bindings = { 
+            nvrhi::BindingLayoutItem::PushConstants(0, sizeof(float) * 2),
+            nvrhi::BindingLayoutItem::Texture_SRV(0),
+            nvrhi::BindingLayoutItem::Sampler(0) 
         };
         bindingLayout = renderer->createBindingLayout(layoutDesc);
 
-        basePSODesc.primType = nvrhi::PrimitiveType::TRIANGLE_LIST;
+        basePSODesc.primType = nvrhi::PrimitiveType::TriangleList;
         basePSODesc.inputLayout = shaderAttribLayout;
         basePSODesc.VS = vertexShader;
         basePSODesc.PS = pixelShader;
@@ -161,7 +188,6 @@ bool ImGui_NVRHI::init(nvrhi::DeviceHandle renderer, std::shared_ptr<ShaderFacto
     }
 
     auto& io = ImGui::GetIO();
-    io.RenderDrawListsFn = nullptr;
     io.Fonts->AddFontDefault();
 
     m_commandList->close();
@@ -172,7 +198,7 @@ bool ImGui_NVRHI::init(nvrhi::DeviceHandle renderer, std::shared_ptr<ShaderFacto
 
 bool ImGui_NVRHI::reallocateBuffer(nvrhi::BufferHandle& buffer, size_t requiredSize, size_t reallocateSize, const bool indexBuffer)
 {
-    if (buffer == nullptr || size_t(buffer->GetDesc().byteSize) < requiredSize)
+    if (buffer == nullptr || size_t(buffer->getDesc().byteSize) < requiredSize)
     {
         nvrhi::BufferDesc desc;
         desc.byteSize = uint32_t(reallocateSize);
@@ -182,8 +208,9 @@ bool ImGui_NVRHI::reallocateBuffer(nvrhi::BufferHandle& buffer, size_t requiredS
         desc.isVertexBuffer = !indexBuffer;
         desc.isIndexBuffer = indexBuffer;
         desc.isDrawIndirectArgs = false;
-        desc.disableGPUsSync = false;
         desc.isVolatile = false;
+        desc.initialState = indexBuffer ? nvrhi::ResourceStates::IndexBuffer : nvrhi::ResourceStates::VertexBuffer;
+        desc.keepInitialState = true;
 
         buffer = renderer->createBuffer(desc);
 
@@ -228,11 +255,8 @@ nvrhi::IBindingSet* ImGui_NVRHI::getBindingSet(nvrhi::ITexture* texture)
 
     nvrhi::BindingSetDesc desc;
 
-    desc.VS = {
-        nvrhi::BindingSetItem::ConstantBuffer(0, constantBuffer)
-    };
-
-    desc.PS = {
+    desc.bindings = {
+        nvrhi::BindingSetItem::PushConstants(0, sizeof(float) * 2),
         nvrhi::BindingSetItem::Texture_SRV(0, texture),
         nvrhi::BindingSetItem::Sampler(0, fontSampler)
     };
@@ -266,8 +290,8 @@ bool ImGui_NVRHI::updateGeometry(nvrhi::ICommandList* commandList)
         return false;
     }
 
-    vtxBuffer.resize(vertexBuffer->GetDesc().byteSize / sizeof(ImDrawVert));
-    idxBuffer.resize(indexBuffer->GetDesc().byteSize / sizeof(ImDrawIdx));
+    vtxBuffer.resize(vertexBuffer->getDesc().byteSize / sizeof(ImDrawVert));
+    idxBuffer.resize(indexBuffer->getDesc().byteSize / sizeof(ImDrawIdx));
 
     // copy and convert all vertices into a single contiguous buffer
     ImDrawVert *vtxDst = &vtxBuffer[0];
@@ -284,36 +308,10 @@ bool ImGui_NVRHI::updateGeometry(nvrhi::ICommandList* commandList)
         idxDst += cmdList->IdxBuffer.Size;
     }
     
-    commandList->beginTrackingBufferState(vertexBuffer, nvrhi::ResourceStates::COMMON);
-    commandList->beginTrackingBufferState(indexBuffer, nvrhi::ResourceStates::COMMON);
-    commandList->writeBuffer(vertexBuffer, &vtxBuffer[0], vertexBuffer->GetDesc().byteSize);
-    commandList->writeBuffer(indexBuffer, &idxBuffer[0], indexBuffer->GetDesc().byteSize);
+    commandList->writeBuffer(vertexBuffer, &vtxBuffer[0], vertexBuffer->getDesc().byteSize);
+    commandList->writeBuffer(indexBuffer, &idxBuffer[0], indexBuffer->getDesc().byteSize);
 
     return true;
-}
-
-void ImGui_NVRHI::updateConstantBuffer(nvrhi::ICommandList* commandList)
-{
-    const auto& io = ImGui::GetIO();
-
-    if (io.DisplaySize.x == lastDisplaySize.x &&
-        io.DisplaySize.y == lastDisplaySize.y)
-    {
-        // nothing to do
-        return;
-    }
-
-    // setup orthgraphic projection matrix into our constant buffer
-    float mvp[4][4] =
-    {
-        { 2.0f/io.DisplaySize.x, 0.0f,                   0.0f, -1.0f },
-        { 0.0f,                  2.0f/-io.DisplaySize.y, 0.0f,  1.0f },
-        { 0.0f,                  0.0f,                  -1.0f,  0.0f },
-        { 0.0f,                  0.0f,                   0.0f,  1.0f },
-    };
-
-    commandList->writeBuffer(constantBuffer, mvp, sizeof(mvp));
-    lastDisplaySize = io.DisplaySize;
 }
 
 bool ImGui_NVRHI::render(nvrhi::IFramebuffer* framebuffer)
@@ -324,8 +322,6 @@ bool ImGui_NVRHI::render(nvrhi::IFramebuffer* framebuffer)
     m_commandList->open();
     m_commandList->beginMarker("ImGUI");
 
-    m_commandList->beginTrackingBufferState(constantBuffer, nvrhi::ResourceStates::COMMON);
-    
     if (!updateGeometry(m_commandList))
     {
         return false;
@@ -334,7 +330,7 @@ bool ImGui_NVRHI::render(nvrhi::IFramebuffer* framebuffer)
     // handle DPI scaling
     drawData->ScaleClipRects(io.DisplayFramebufferScale);
 
-    updateConstantBuffer(m_commandList);
+    float invDisplaySize[2] = { 1.f / io.DisplaySize.x, 1.f / io.DisplaySize.y };
 
     // set up graphics state
     nvrhi::GraphicsState drawState;
@@ -354,7 +350,7 @@ bool ImGui_NVRHI::render(nvrhi::IFramebuffer* framebuffer)
     vbufBinding.offset = 0;
     drawState.vertexBuffers.push_back(vbufBinding);
 
-    drawState.indexBuffer.handle = indexBuffer;
+    drawState.indexBuffer.buffer = indexBuffer;
     drawState.indexBuffer.format = (sizeof(ImDrawIdx) == 2 ? nvrhi::Format::R16_UINT : nvrhi::Format::R32_UINT);
     drawState.indexBuffer.offset = 0;
 
@@ -386,6 +382,7 @@ bool ImGui_NVRHI::render(nvrhi::IFramebuffer* framebuffer)
                 drawArguments.startVertexLocation = vtxOffset;
 
                 m_commandList->setGraphicsState(drawState);
+                m_commandList->setPushConstants(invDisplaySize, sizeof(invDisplaySize));
                 m_commandList->drawIndexed(drawArguments);
             }
 
@@ -394,10 +391,6 @@ bool ImGui_NVRHI::render(nvrhi::IFramebuffer* framebuffer)
 
         vtxOffset += cmdList->VtxBuffer.Size;
     }
-
-    m_commandList->endTrackingBufferState(vertexBuffer, nvrhi::ResourceStates::COMMON);
-    m_commandList->endTrackingBufferState(indexBuffer, nvrhi::ResourceStates::COMMON);
-    m_commandList->endTrackingBufferState(constantBuffer, nvrhi::ResourceStates::COMMON);
 
     m_commandList->endMarker();
     m_commandList->close();

@@ -1,5 +1,24 @@
-set(__donut_compileshaders_script
-    ${CMAKE_CURRENT_LIST_DIR}/scripts/CompileShaders.py CACHE INTERNAL "")
+#
+# Copyright (c) 2014-2020, NVIDIA CORPORATION. All rights reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+# and/or sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 
 # generates a build target that will compile shaders for a given config file
 #
@@ -11,7 +30,7 @@ set(__donut_compileshaders_script
 
 function(donut_compile_shaders)
     set(options "")
-    set(oneValueArgs TARGET CONFIG FOLDER DXIL DXBC SPIRV_DXC)
+    set(oneValueArgs TARGET CONFIG FOLDER DXIL DXBC SPIRV_DXC CFLAGS)
     set(multiValueArgs SOURCES)
     cmake_parse_arguments(params "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -26,52 +45,74 @@ function(donut_compile_shaders)
     set_source_files_properties(${params_SOURCES} PROPERTIES VS_TOOL_OVERRIDE "None") 
 
     add_custom_target(${params_TARGET}
-        DEPENDS ${__donut_compileshaders_script}
+        DEPENDS shaderCompiler
         SOURCES ${params_SOURCES})
 
     if (params_DXIL AND (DONUT_WITH_DX12 AND DONUT_USE_DXIL_ON_DX12))
-        if (NOT DXC_BIN_DXIL)
-            #message(FATAL_ERROR "donut_compile_shaders: DXC not found --- please set DXC_BIN_DXIL to the full path to the DXC binary")
+        if (NOT DXC_DXIL_EXECUTABLE)
+            message(FATAL_ERROR "donut_compile_shaders: DXC not found --- please set DXC_DXIL_EXECUTABLE to the full path to the DXC binary")
+        endif()
+
+        if (NOT params_CFLAGS)
+            set(CFLAGS "$<IF:$<CONFIG:Debug>,-Zi -Qembed_debug,-Qstrip_debug -Qstrip_reflect> -O3 -WX -Zpr")
+        else()
+            set(CFLAGS ${params_CFLAGS})
         endif()
 
         add_custom_command(TARGET ${params_TARGET} PRE_BUILD
-                          COMMAND ${Python_EXECUTABLE} ${__donut_compileshaders_script}
-                                   -infile ${params_CONFIG}
-                                   -parallel
-                                   -out ${params_DXIL}
-                                   -dxil
+                          COMMAND shaderCompiler
+                                   --infile ${params_CONFIG}
+                                   --parallel
+                                   --out ${params_DXIL}
+                                   --platform dxil
+                                   --cflags "${CFLAGS}"
                                    -I ${DONUT_SHADER_INCLUDE_DIR}
-                                   -dxc ${DXC_BIN_DXIL})
+                                   --compiler ${DXC_DXIL_EXECUTABLE})
     endif()
 
     if (params_DXBC AND (DONUT_WITH_DX11 OR (DONUT_WITH_DX12 AND NOT DONUT_USE_DXIL_ON_DX12)))
-        if (NOT FXC_BIN)
-            #message(FATAL_ERROR "donut_compile_shaders: FXC not found --- please set FXC_BIN to the full path to the FXC binary")
+        if (NOT FXC_EXECUTABLE)
+            message(FATAL_ERROR "donut_compile_shaders: FXC not found --- please set FXC_EXECUTABLE to the full path to the FXC binary")
+        endif()
+
+        if (NOT params_CFLAGS)
+            set(CFLAGS "$<IF:$<CONFIG:Debug>,-Zi,-Qstrip_priv -Qstrip_debug -Qstrip_reflect> -O3 -WX -Zpr")
+        else()
+            set(CFLAGS ${params_CFLAGS})
         endif()
 
         add_custom_command(TARGET ${params_TARGET} PRE_BUILD
-                          COMMAND ${Python_EXECUTABLE} ${__donut_compileshaders_script}
-                                   -infile ${params_CONFIG}
-                                   -parallel
-                                   -out ${params_DXBC}
-                                   -dxbc
+                          COMMAND shaderCompiler
+                                   --infile ${params_CONFIG}
+                                   --parallel
+                                   --out ${params_DXBC}
+                                   --platform dxbc
+                                   --cflags "${CFLAGS}"
                                    -I ${DONUT_SHADER_INCLUDE_DIR}
-                                   -fxc ${FXC_BIN})
+                                   --compiler ${FXC_EXECUTABLE})
     endif()
 
     if (params_SPIRV_DXC AND DONUT_WITH_VULKAN)
-        if (NOT DXC_BIN_SPIRV)
-            message(FATAL_ERROR "donut_compile_shaders: DXC for SPIR-V not found --- please set DXC_BIN_SPIRV to the full path to the DXC binary")
+        if (NOT DXC_SPIRV_EXECUTABLE)
+            message(FATAL_ERROR "donut_compile_shaders: DXC for SPIR-V not found --- please set DXC_SPIRV_EXECUTABLE to the full path to the DXC binary")
+        endif()
+
+        if (NOT params_CFLAGS)
+            set(CFLAGS "$<IF:$<CONFIG:Debug>,-Zi,> -fspv-target-env=vulkan1.2 -O3 -WX -Zpr")
+        else()
+            set(CFLAGS ${params_CFLAGS})
         endif()
 
         add_custom_command(TARGET ${params_TARGET} PRE_BUILD
-                          COMMAND ${Python_EXECUTABLE} ${__donut_compileshaders_script}
-                                   -infile ${params_CONFIG}
-                                   -parallel
-                                   -out ${params_SPIRV_DXC}
-                                   -spirv
+                          COMMAND shaderCompiler
+                                   --infile ${params_CONFIG}
+                                   --parallel
+                                   --out ${params_SPIRV_DXC}
+                                   --platform spirv
                                    -I ${DONUT_SHADER_INCLUDE_DIR}
-                                   -dxc ${DXC_BIN_SPIRV})
+                                   -D SPIRV
+                                   --cflags "${CFLAGS}"
+                                   --compiler ${DXC_SPIRV_EXECUTABLE})
     endif()
 
     if(params_FOLDER)
@@ -86,7 +127,7 @@ endfunction()
 
 function(donut_compile_shaders_all_platforms)
     set(options "")
-    set(oneValueArgs TARGET CONFIG FOLDER OUTPUT_BASE)
+    set(oneValueArgs TARGET CONFIG FOLDER OUTPUT_BASE CFLAGS)
     set(multiValueArgs SOURCES)
     cmake_parse_arguments(params "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -103,6 +144,7 @@ function(donut_compile_shaders_all_platforms)
     donut_compile_shaders(TARGET ${params_TARGET}
                           CONFIG ${params_CONFIG}
                           FOLDER ${params_FOLDER}
+                          CFLAGS ${params_CFLAGS}
                           DXBC ${params_OUTPUT_BASE}/dxbc
                           DXIL ${params_OUTPUT_BASE}/dxil
                           SPIRV_DXC ${params_OUTPUT_BASE}/spirv

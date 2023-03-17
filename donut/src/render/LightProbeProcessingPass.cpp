@@ -1,3 +1,24 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/render/LightProbeProcessingPass.h>
 #include <donut/engine/FramebufferFactory.h>
@@ -23,25 +44,27 @@ LightProbeProcessingPass::LightProbeProcessingPass(
     , m_CommonPasses(commonPasses)
     , m_IntermediateTextureSize(intermediateTextureSize)
 {
-    m_GeometryShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/light_probe.hlsl", "cubemap_gs", nullptr, nvrhi::ShaderType::SHADER_GEOMETRY);
-    m_MipPixelShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/light_probe.hlsl", "mip_ps", nullptr, nvrhi::ShaderType::SHADER_PIXEL);
-    m_DiffusePixelShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/light_probe.hlsl", "diffuse_probe_ps", nullptr, nvrhi::ShaderType::SHADER_PIXEL);
-    m_SpecularPixelShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/light_probe.hlsl", "specular_probe_ps", nullptr, nvrhi::ShaderType::SHADER_PIXEL);
-    m_EnvironmentBrdfPixelShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/light_probe.hlsl", "environment_brdf_ps", nullptr, nvrhi::ShaderType::SHADER_PIXEL);
+    m_GeometryShader = shaderFactory->CreateShader("donut/passes/light_probe.hlsl", "cubemap_gs", nullptr, nvrhi::ShaderType::Geometry);
+    m_MipPixelShader = shaderFactory->CreateShader("donut/passes/light_probe.hlsl", "mip_ps", nullptr, nvrhi::ShaderType::Pixel);
+    m_DiffusePixelShader = shaderFactory->CreateShader("donut/passes/light_probe.hlsl", "diffuse_probe_ps", nullptr, nvrhi::ShaderType::Pixel);
+    m_SpecularPixelShader = shaderFactory->CreateShader("donut/passes/light_probe.hlsl", "specular_probe_ps", nullptr, nvrhi::ShaderType::Pixel);
+    m_EnvironmentBrdfPixelShader = shaderFactory->CreateShader("donut/passes/light_probe.hlsl", "environment_brdf_ps", nullptr, nvrhi::ShaderType::Pixel);
 
     nvrhi::BindingLayoutDesc layoutDesc;
-    layoutDesc.PS = {
-        { 0, nvrhi::ResourceType::VolatileConstantBuffer },
-        { 0, nvrhi::ResourceType::Sampler },
-        { 0, nvrhi::ResourceType::Texture_SRV },
+    layoutDesc.visibility = nvrhi::ShaderType::Pixel;
+    layoutDesc.bindings = {
+        nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
+        nvrhi::BindingLayoutItem::Sampler(0),
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
     };
     m_BindingLayout = device->createBindingLayout(layoutDesc);
 
     nvrhi::BufferDesc constantBufferDesc;
     constantBufferDesc.byteSize = sizeof(LightProbeConstants);
-    constantBufferDesc.debugName = "SsaoConstants";
+    constantBufferDesc.debugName = "LightProbeConstants";
     constantBufferDesc.isConstantBuffer = true;
     constantBufferDesc.isVolatile = true;
+    constantBufferDesc.maxVersions = 64;
     m_LightProbeCB = device->createBuffer(constantBufferDesc);
 
     assert(intermediateTextureSize > 0);
@@ -54,7 +77,7 @@ LightProbeProcessingPass::LightProbeProcessingPass(
     cubemapDesc.dimension = nvrhi::TextureDimension::TextureCube;
     cubemapDesc.isRenderTarget = true;
     cubemapDesc.format = intermediateTextureFormat;
-    cubemapDesc.initialState = nvrhi::ResourceStates::RENDER_TARGET;
+    cubemapDesc.initialState = nvrhi::ResourceStates::RenderTarget;
     cubemapDesc.keepInitialState = true;
     cubemapDesc.clearValue = nvrhi::Color(0.f);
     cubemapDesc.useClearValue = true;
@@ -67,7 +90,7 @@ LightProbeProcessingPass::LightProbeProcessingPass(
     brdfTextureDesc.width = m_EnvironmentBrdfTextureSize;
     brdfTextureDesc.height = m_EnvironmentBrdfTextureSize;
     brdfTextureDesc.format = nvrhi::Format::RG16_FLOAT;
-    brdfTextureDesc.initialState = nvrhi::ResourceStates::SHADER_RESOURCE;
+    brdfTextureDesc.initialState = nvrhi::ResourceStates::ShaderResource;
     brdfTextureDesc.keepInitialState = true;
     brdfTextureDesc.isRenderTarget = true;
     brdfTextureDesc.clearValue = nvrhi::Color(0.f);
@@ -103,7 +126,7 @@ nvrhi::BindingSetHandle LightProbeProcessingPass::GetCachedBindingSet(nvrhi::ITe
     if (!bindingSet)
     {
         nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.PS = {
+        bindingSetDesc.bindings = {
             nvrhi::BindingSetItem::ConstantBuffer(0, m_LightProbeCB),
             nvrhi::BindingSetItem::Sampler(0, m_CommonPasses->m_LinearWrapSampler),
             nvrhi::BindingSetItem::Texture_SRV(0, texture, nvrhi::Format::UNKNOWN, subresources),
@@ -117,16 +140,16 @@ nvrhi::BindingSetHandle LightProbeProcessingPass::GetCachedBindingSet(nvrhi::ITe
 
 void LightProbeProcessingPass::BlitCubemap(nvrhi::ICommandList* commandList, nvrhi::ITexture* inCubeMap, uint32_t inBaseArraySlice, uint32_t inMipLevel, nvrhi::ITexture* outCubeMap, uint32_t outBaseArraySlice, uint32_t outMipLevel)
 {
-    const nvrhi::TextureDesc& inputDesc = inCubeMap->GetDesc();
+    const nvrhi::TextureDesc& inputDesc = inCubeMap->getDesc();
     assert(inputDesc.dimension == nvrhi::TextureDimension::TextureCube || inputDesc.dimension == nvrhi::TextureDimension::TextureCubeArray);
 
-    const nvrhi::TextureDesc& outputDesc = outCubeMap->GetDesc();
+    const nvrhi::TextureDesc& outputDesc = outCubeMap->getDesc();
     assert(outputDesc.dimension == nvrhi::TextureDimension::TextureCube || outputDesc.dimension == nvrhi::TextureDimension::TextureCubeArray);
 
     
     nvrhi::FramebufferHandle framebuffer = GetCachedFramebuffer(outCubeMap, nvrhi::TextureSubresourceSet(outMipLevel, 1, outBaseArraySlice, 6));
 
-    nvrhi::GraphicsPipelineHandle& pso = m_BlitPsoCache[framebuffer->GetFramebufferInfo()];
+    nvrhi::GraphicsPipelineHandle& pso = m_BlitPsoCache[framebuffer->getFramebufferInfo()];
 
     if (!pso)
     {
@@ -135,9 +158,9 @@ void LightProbeProcessingPass::BlitCubemap(nvrhi::ICommandList* commandList, nvr
         psoDesc.GS = m_GeometryShader;
         psoDesc.PS = m_MipPixelShader;
         psoDesc.bindingLayouts = { m_BindingLayout };
-        psoDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
-        psoDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        psoDesc.renderState.depthStencilState.depthEnable = false;
+        psoDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
+        psoDesc.renderState.rasterState.setCullNone();
+        psoDesc.renderState.depthStencilState.depthTestEnable = false;
         psoDesc.renderState.depthStencilState.stencilEnable = false;
         pso = m_Device->createGraphicsPipeline(psoDesc, framebuffer);
     }
@@ -189,11 +212,11 @@ void LightProbeProcessingPass::RenderDiffuseMap(
     uint32_t outBaseArraySlice,
     uint32_t outMipLevel)
 {
-    const nvrhi::TextureDesc& inDesc = inEnvironmentMap->GetDesc();
+    const nvrhi::TextureDesc& inDesc = inEnvironmentMap->getDesc();
     assert(inDesc.dimension == nvrhi::TextureDimension::TextureCube || inDesc.dimension == nvrhi::TextureDimension::TextureCubeArray);
     float inputSize = ceilf(float(inDesc.width) * powf(0.5f, float(inSubresources.baseMipLevel)));
 
-    const nvrhi::TextureDesc& outDesc = outDiffuseMap->GetDesc();
+    const nvrhi::TextureDesc& outDesc = outDiffuseMap->getDesc();
     assert(outDesc.dimension == nvrhi::TextureDimension::TextureCube || outDesc.dimension == nvrhi::TextureDimension::TextureCubeArray);
     float outputSize = ceilf(float(outDesc.width) * powf(0.5f, float(outMipLevel)));
 
@@ -204,7 +227,7 @@ void LightProbeProcessingPass::RenderDiffuseMap(
 
     nvrhi::FramebufferHandle framebuffer = GetCachedFramebuffer(m_IntermediateTexture, nvrhi::TextureSubresourceSet(intermediateMipLevel, 1, 0, 6));
 
-    nvrhi::GraphicsPipelineHandle& pso = m_DiffusePsoCache[framebuffer->GetFramebufferInfo()];
+    nvrhi::GraphicsPipelineHandle& pso = m_DiffusePsoCache[framebuffer->getFramebufferInfo()];
 
     if (!pso)
     {
@@ -213,9 +236,9 @@ void LightProbeProcessingPass::RenderDiffuseMap(
         psoDesc.GS = m_GeometryShader;
         psoDesc.PS = m_DiffusePixelShader;
         psoDesc.bindingLayouts = { m_BindingLayout };
-        psoDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
-        psoDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        psoDesc.renderState.depthStencilState.depthEnable = false;
+        psoDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
+        psoDesc.renderState.rasterState.setCullNone();
+        psoDesc.renderState.depthStencilState.depthTestEnable = false;
         psoDesc.renderState.depthStencilState.stencilEnable = false;
         pso = m_Device->createGraphicsPipeline(psoDesc, framebuffer);
     }
@@ -248,22 +271,22 @@ void LightProbeProcessingPass::RenderDiffuseMap(
 
 void LightProbeProcessingPass::RenderSpecularMap(nvrhi::ICommandList* commandList, float roughness, nvrhi::ITexture* inEnvironmentMap, nvrhi::TextureSubresourceSet inSubresources, nvrhi::ITexture* outDiffuseMap, uint32_t outBaseArraySlice, uint32_t outMipLevel)
 {
-    const nvrhi::TextureDesc& inDesc = inEnvironmentMap->GetDesc();
+    const nvrhi::TextureDesc& inDesc = inEnvironmentMap->getDesc();
     assert(inDesc.dimension == nvrhi::TextureDimension::TextureCube || inDesc.dimension == nvrhi::TextureDimension::TextureCubeArray);
     float inputSize = ceilf(float(inDesc.width) * powf(0.5f, float(inSubresources.baseMipLevel)));
 
-    const nvrhi::TextureDesc& outDesc = outDiffuseMap->GetDesc();
+    const nvrhi::TextureDesc& outDesc = outDiffuseMap->getDesc();
     assert(outDesc.dimension == nvrhi::TextureDimension::TextureCube || outDesc.dimension == nvrhi::TextureDimension::TextureCubeArray);
     float outputSize = ceilf(float(outDesc.width) * powf(0.5f, float(outMipLevel)));
 
     uint32_t intermediateMipLevel = static_cast<uint32_t>(std::max(0.f, dm::log2f(float(m_IntermediateTextureSize) / outputSize) - 2.f));
     float intermediateSize = ceilf(float(m_IntermediateTextureSize) * powf(0.5f, float(intermediateMipLevel)));
 
-    commandList->beginMarker("Diffuse Light Probe");
+    commandList->beginMarker("Specular Light Probe");
 
     nvrhi::FramebufferHandle framebuffer = GetCachedFramebuffer(m_IntermediateTexture, nvrhi::TextureSubresourceSet(intermediateMipLevel, 1, 0, 6));
 
-    nvrhi::GraphicsPipelineHandle& pso = m_SpecularPsoCache[framebuffer->GetFramebufferInfo()];
+    nvrhi::GraphicsPipelineHandle& pso = m_SpecularPsoCache[framebuffer->getFramebufferInfo()];
 
     if (!pso)
     {
@@ -272,9 +295,9 @@ void LightProbeProcessingPass::RenderSpecularMap(nvrhi::ICommandList* commandLis
         psoDesc.GS = m_GeometryShader;
         psoDesc.PS = m_SpecularPixelShader;
         psoDesc.bindingLayouts = { m_BindingLayout };
-        psoDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
-        psoDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        psoDesc.renderState.depthStencilState.depthEnable = false;
+        psoDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
+        psoDesc.renderState.rasterState.setCullNone();
+        psoDesc.renderState.depthStencilState.depthTestEnable = false;
         psoDesc.renderState.depthStencilState.stencilEnable = false;
         pso = m_Device->createGraphicsPipeline(psoDesc, framebuffer);
     }
@@ -316,9 +339,9 @@ void LightProbeProcessingPass::RenderEnvironmentBrdfTexture(nvrhi::ICommandList*
     nvrhi::GraphicsPipelineDesc psoDesc;
     psoDesc.VS = m_CommonPasses->m_FullscreenVS;
     psoDesc.PS = m_EnvironmentBrdfPixelShader;
-    psoDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
-    psoDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-    psoDesc.renderState.depthStencilState.depthEnable = false;
+    psoDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
+    psoDesc.renderState.rasterState.setCullNone();
+    psoDesc.renderState.depthStencilState.depthTestEnable = false;
     psoDesc.renderState.depthStencilState.stencilEnable = false;
     nvrhi::GraphicsPipelineHandle pso = m_Device->createGraphicsPipeline(psoDesc, framebuffer);
 

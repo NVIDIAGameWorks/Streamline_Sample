@@ -1,3 +1,24 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/render/ToneMappingPasses.h>
 #include <donut/engine/ShaderFactory.h>
@@ -20,17 +41,13 @@ ToneMappingPass::ToneMappingPass(
     std::shared_ptr<CommonRenderPasses> commonPasses,
     std::shared_ptr<FramebufferFactory> framebufferFactory,
     const ICompositeView& compositeView,
-    uint32_t histogramBins,
-    bool isTextureArray,
-    nvrhi::ITexture* exposureTextureOverride,
-    nvrhi::ResourceStates::Enum exposureTextureStateOverride,
-    nvrhi::ITexture* colorLUT)
+    const CreateParameters& params)
     : m_Device(device)
     , m_CommonPasses(commonPasses)
-    , m_HistogramBins(histogramBins)
+    , m_HistogramBins(params.histogramBins)
     , m_FramebufferFactory(framebufferFactory)
 {
-    assert(histogramBins <= 256);
+    assert(params.histogramBins <= 256);
 
     const IView* sampleView = compositeView.GetChildView(ViewType::PLANAR, 0);
     nvrhi::IFramebuffer* sampleFramebuffer = m_FramebufferFactory->GetFramebuffer(*sampleView);
@@ -39,13 +56,13 @@ ToneMappingPass::ToneMappingPass(
         std::vector<ShaderMacro> Macros;
 
         std::stringstream ss;
-        ss << histogramBins;
+        ss << params.histogramBins;
         Macros.push_back(ShaderMacro("HISTOGRAM_BINS", ss.str()));
-        Macros.push_back(ShaderMacro("SOURCE_ARRAY", isTextureArray ? "1" : "0"));
+        Macros.push_back(ShaderMacro("SOURCE_ARRAY", params.isTextureArray ? "1" : "0"));
 
-        m_HistogramComputeShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/histogram_cs.hlsl", "main", &Macros, nvrhi::ShaderType::SHADER_COMPUTE);
-        m_ExposureComputeShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/exposure_cs.hlsl", "main", &Macros, nvrhi::ShaderType::SHADER_COMPUTE);
-        m_PixelShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/tonemapping_ps.hlsl", "main", &Macros, nvrhi::ShaderType::SHADER_PIXEL);
+        m_HistogramComputeShader = shaderFactory->CreateShader("donut/passes/histogram_cs.hlsl", "main", &Macros, nvrhi::ShaderType::Compute);
+        m_ExposureComputeShader = shaderFactory->CreateShader("donut/passes/exposure_cs.hlsl", "main", &Macros, nvrhi::ShaderType::Compute);
+        m_PixelShader = shaderFactory->CreateShader("donut/passes/tonemapping_ps.hlsl", "main", &Macros, nvrhi::ShaderType::Pixel);
     }
 
     nvrhi::BufferDesc constantBufferDesc;
@@ -53,41 +70,36 @@ ToneMappingPass::ToneMappingPass(
     constantBufferDesc.debugName = "ToneMappingConstants";
     constantBufferDesc.isConstantBuffer = true;
     constantBufferDesc.isVolatile = true;
+    constantBufferDesc.maxVersions = params.numConstantBufferVersions;
     m_ToneMappingCB = device->createBuffer(constantBufferDesc);
 
     nvrhi::BufferDesc storageBufferDesc;
     storageBufferDesc.byteSize = sizeof(uint) * m_HistogramBins;
+    storageBufferDesc.format = nvrhi::Format::R32_UINT;
     storageBufferDesc.canHaveUAVs = true;
     storageBufferDesc.debugName = "HistogramBuffer";
+    storageBufferDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    storageBufferDesc.keepInitialState = true;
+    storageBufferDesc.canHaveTypedViews = true;
     m_HistogramBuffer = device->createBuffer(storageBufferDesc);
-    m_HistogramBufferState = nvrhi::ResourceStates::COMMON;
 
-    if (exposureTextureOverride)
+    if (params.exposureBufferOverride)
     {
-        m_ExposureTexture = exposureTextureOverride;
-        m_ExposureTextureState = exposureTextureStateOverride;
+        m_ExposureBuffer = params.exposureBufferOverride;
     }
     else
     {
-        nvrhi::TextureDesc exposureTextureDesc;
-        exposureTextureDesc.width = 1;
-        exposureTextureDesc.height = 1;
-        exposureTextureDesc.isRenderTarget = true;
-        exposureTextureDesc.sampleCount = 1;
-        exposureTextureDesc.dimension = nvrhi::TextureDimension::Texture2D;
-        exposureTextureDesc.keepInitialState = true;
-        exposureTextureDesc.format = nvrhi::Format::R16_FLOAT;
-        exposureTextureDesc.isUAV = true;
-        exposureTextureDesc.debugName = "ExposureTexture";
-        m_ExposureTexture = device->createTexture(exposureTextureDesc);
-        m_ExposureTextureState = nvrhi::ResourceStates::COMMON;
+        storageBufferDesc.byteSize = sizeof(uint);
+        storageBufferDesc.format = nvrhi::Format::R32_UINT;
+        storageBufferDesc.debugName = "ExposureBuffer";
+        m_ExposureBuffer = device->createBuffer(storageBufferDesc);
     }
 
     m_ColorLUT = commonPasses->m_BlackTexture;
 
-    if (colorLUT)
+    if (params.colorLUT)
     {
-        const nvrhi::TextureDesc& desc = colorLUT->GetDesc();
+        const nvrhi::TextureDesc& desc = params.colorLUT->getDesc();
         m_ColorLUTSize = float(desc.height);
 
         if (desc.width != desc.height * desc.height)
@@ -97,16 +109,17 @@ ToneMappingPass::ToneMappingPass(
         }
         else
         {
-            m_ColorLUT = colorLUT;
+            m_ColorLUT = params.colorLUT;
         }
     }
 
     {
         nvrhi::BindingLayoutDesc layoutDesc;
-        layoutDesc.CS = {
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer },
-            { 0, nvrhi::ResourceType::Texture_SRV },
-            { 0, nvrhi::ResourceType::Buffer_UAV }
+        layoutDesc.visibility = nvrhi::ShaderType::Compute;
+        layoutDesc.bindings = {
+            nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
+            nvrhi::BindingLayoutItem::Texture_SRV(0),
+            nvrhi::BindingLayoutItem::TypedBuffer_UAV(0)
         };
         m_HistogramBindingLayout = device->createBindingLayout(layoutDesc);
 
@@ -118,18 +131,19 @@ ToneMappingPass::ToneMappingPass(
 
     {
         nvrhi::BindingLayoutDesc layoutDesc;
-        layoutDesc.CS = {
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer },
-            { 0, nvrhi::ResourceType::Buffer_SRV },
-            { 0, nvrhi::ResourceType::Texture_UAV }
+        layoutDesc.visibility = nvrhi::ShaderType::Compute;
+        layoutDesc.bindings = {
+            nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
+            nvrhi::BindingLayoutItem::TypedBuffer_SRV(0),
+            nvrhi::BindingLayoutItem::TypedBuffer_UAV(0)
         };
         m_ExposureBindingLayout = device->createBindingLayout(layoutDesc);
 
         nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.CS = {
+        bindingSetDesc.bindings = {
             nvrhi::BindingSetItem::ConstantBuffer(0, m_ToneMappingCB),
-            nvrhi::BindingSetItem::Buffer_SRV(0, m_HistogramBuffer, nvrhi::Format::R32_UINT),
-            nvrhi::BindingSetItem::Texture_UAV(0, m_ExposureTexture)
+            nvrhi::BindingSetItem::TypedBuffer_SRV(0, m_HistogramBuffer),
+            nvrhi::BindingSetItem::TypedBuffer_UAV(0, m_ExposureBuffer)
         };
         m_ExposureBindingSet = device->createBindingSet(bindingSetDesc, m_ExposureBindingLayout);
 
@@ -141,23 +155,24 @@ ToneMappingPass::ToneMappingPass(
 
     {
         nvrhi::BindingLayoutDesc layoutDesc;
-        layoutDesc.PS = {
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer },
-            { 0, nvrhi::ResourceType::Texture_SRV },
-            { 1, nvrhi::ResourceType::Texture_SRV },
-            { 2, nvrhi::ResourceType::Texture_SRV },
-            { 0, nvrhi::ResourceType::Sampler }
+        layoutDesc.visibility = nvrhi::ShaderType::Pixel;
+        layoutDesc.bindings = {
+            nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
+            nvrhi::BindingLayoutItem::Texture_SRV(0),
+            nvrhi::BindingLayoutItem::TypedBuffer_SRV(1),
+            nvrhi::BindingLayoutItem::Texture_SRV(2),
+            nvrhi::BindingLayoutItem::Sampler(0)
         };
         m_RenderBindingLayout = device->createBindingLayout(layoutDesc);
 
         nvrhi::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
+        pipelineDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
         pipelineDesc.VS = m_CommonPasses->m_FullscreenVS;
         pipelineDesc.PS = m_PixelShader;
         pipelineDesc.bindingLayouts = { m_RenderBindingLayout};
 
-        pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        pipelineDesc.renderState.depthStencilState.depthEnable = false;
+        pipelineDesc.renderState.rasterState.setCullNone();
+        pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
         pipelineDesc.renderState.depthStencilState.stencilEnable = false;
 
         m_RenderPso = device->createGraphicsPipeline(pipelineDesc, sampleFramebuffer);
@@ -174,10 +189,10 @@ void ToneMappingPass::Render(
     if (!bindingSet)
     {
         nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.PS = {
+        bindingSetDesc.bindings = {
             nvrhi::BindingSetItem::ConstantBuffer(0, m_ToneMappingCB),
             nvrhi::BindingSetItem::Texture_SRV(0, sourceTexture),
-            nvrhi::BindingSetItem::Texture_SRV(1, m_ExposureTexture),
+            nvrhi::BindingSetItem::TypedBuffer_SRV(1, m_ExposureBuffer),
             nvrhi::BindingSetItem::Texture_SRV(2, m_ColorLUT),
             nvrhi::BindingSetItem::Sampler(0, m_CommonPasses->m_LinearClampSampler)
         };
@@ -229,14 +244,9 @@ void ToneMappingPass::SimpleRender(
     commandList->endMarker();
 }
 
-nvrhi::TextureHandle ToneMappingPass::GetExposureTexture()
+nvrhi::BufferHandle ToneMappingPass::GetExposureBuffer()
 {
-    return m_ExposureTexture;
-}
-
-nvrhi::ResourceStates::Enum ToneMappingPass::GetExposureTextureState()
-{
-    return m_ExposureTextureState;
+    return m_ExposureBuffer;
 }
 
 void ToneMappingPass::AdvanceFrame(float frameTime)
@@ -246,7 +256,8 @@ void ToneMappingPass::AdvanceFrame(float frameTime)
 
 void ToneMappingPass::ResetExposure(nvrhi::ICommandList* commandList, float initialExposure)
 {
-    commandList->clearTextureFloat(m_ExposureTexture, nvrhi::AllSubresources, nvrhi::Color(initialExposure));
+    uint32_t uintValue = *(uint32_t*)&initialExposure;
+    commandList->clearBufferUInt(m_ExposureBuffer, uintValue);
 }
 
 void ToneMappingPass::ResetHistogram(nvrhi::ICommandList* commandList)
@@ -263,10 +274,10 @@ void ToneMappingPass::AddFrameToHistogram(nvrhi::ICommandList* commandList, cons
     if (!bindingSet)
     {
         nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.CS = {
+        bindingSetDesc.bindings = {
             nvrhi::BindingSetItem::ConstantBuffer(0, m_ToneMappingCB),
             nvrhi::BindingSetItem::Texture_SRV(0, sourceTexture),
-            nvrhi::BindingSetItem::Buffer_UAV(0, m_HistogramBuffer, nvrhi::Format::R32_UINT)
+            nvrhi::BindingSetItem::TypedBuffer_UAV(0, m_HistogramBuffer)
         };
 
         bindingSet = m_Device->createBindingSet(bindingSetDesc, m_HistogramBindingLayout);
@@ -323,16 +334,4 @@ void ToneMappingPass::ComputeExposure(nvrhi::ICommandList* commandList, const To
     commandList->setComputeState(state);
 
     commandList->dispatch(1);
-}
-
-void ToneMappingPass::BeginTrackingState(nvrhi::ICommandList* commandList)
-{
-    commandList->beginTrackingTextureState(m_ExposureTexture, nvrhi::AllSubresources, m_ExposureTextureState);
-    commandList->beginTrackingBufferState(m_HistogramBuffer, m_HistogramBufferState);
-}
-
-void ToneMappingPass::SaveCurrentState(nvrhi::ICommandList* commandList)
-{
-    m_ExposureTextureState = commandList->getTextureSubresourceState(m_ExposureTexture, 0, 0);
-    m_HistogramBufferState = commandList->getBufferState(m_HistogramBuffer);
 }

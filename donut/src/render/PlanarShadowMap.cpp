@@ -1,3 +1,24 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/render/PlanarShadowMap.h>
 
@@ -22,7 +43,7 @@ PlanarShadowMap::PlanarShadowMap(
     desc.debugName = "ShadowMap";
     desc.useClearValue = true;
     desc.clearValue = nvrhi::Color(1.f);
-    desc.initialState = nvrhi::ResourceStates::SHADER_RESOURCE;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
     desc.keepInitialState = true;
     desc.dimension = nvrhi::TextureDimension::Texture2DArray;
     m_ShadowMapTexture = device->createTexture(desc);
@@ -43,7 +64,7 @@ PlanarShadowMap::PlanarShadowMap(
 {
     m_ShadowMapTexture = texture;
     
-    const nvrhi::TextureDesc& textureDesc = m_ShadowMapTexture->GetDesc();
+    const nvrhi::TextureDesc& textureDesc = m_ShadowMapTexture->getDesc();
     m_TextureSize = float2(static_cast<float>(textureDesc.width), static_cast<float>(textureDesc.height));
     m_ShadowMapSize = float2(viewport.maxX - viewport.minX, viewport.maxY - viewport.minY);
 
@@ -54,13 +75,9 @@ PlanarShadowMap::PlanarShadowMap(
 
 bool PlanarShadowMap::SetupWholeSceneDirectionalLightView(const DirectionalLight& light, box3_arg sceneBounds, float fadeRangeWorld)
 {
-    // Choose a world-space up-vector
-    float3 vecUp = { 0.0f, 0.0f, 1.0f };
-    if (all(isnear(light.direction.xy(), 0.0f)))
-        vecUp = float3(1.0f, 0.0f, 0.0f);
-
-    affine3 viewToWorld = lookatZ(light.direction, vecUp);
-    affine3 worldToView = transpose(viewToWorld);
+    daffine3 viewToWorld = light.GetNode()->GetLocalToWorldTransform();
+    viewToWorld = dm::scaling(dm::double3(1.0, 1.0, -1.0)) * viewToWorld;
+    affine3 worldToView = affine3(inverse(viewToWorld));
 
     // Transform scene AABB into view space and recalculate bounds
     box3 boundsView = sceneBounds * worldToView;
@@ -83,6 +100,7 @@ bool PlanarShadowMap::SetupWholeSceneDirectionalLightView(const DirectionalLight
     bool viewIsModified = m_View->GetViewMatrix() != worldToView || any(m_View->GetProjectionMatrix(false) != projection);
 
     m_View->SetMatrices(worldToView, projection);
+    m_View->UpdateCache();
 
     m_FadeRangeTexels = clamp(
         float2(fadeRangeWorld * m_ShadowMapSize) / boundsView.diagonal().xy(),
@@ -94,20 +112,16 @@ bool PlanarShadowMap::SetupWholeSceneDirectionalLightView(const DirectionalLight
 
 bool PlanarShadowMap::SetupDynamicDirectionalLightView(const DirectionalLight& light, float3 anchor, float3 halfShadowBoxSize, float3 preViewTranslation, float fadeRangeWorld)
 {
-    // Choose a world-space up-vector
-    float3 vecUp = { 0.0f, 0.0f, 1.0f };
-    if (all(isnear(light.direction.xy(), 0.0f)))
-        vecUp = float3(1.0f, 0.0f, 0.0f);
-
-    affine3 viewToWorld = lookatZ(light.direction, vecUp);
-    affine3 worldToView = transpose(viewToWorld);
+    daffine3 viewToWorld = light.GetNode()->GetLocalToWorldTransform();
+    viewToWorld = dm::scaling(dm::double3(1.0, 1.0, -1.0)) * viewToWorld;
+    affine3 worldToView = affine3(inverse(viewToWorld));
 
     // Snap the anchor to the texel grid to avoid jitter
     float2 texelSize = float2(2.f) * halfShadowBoxSize.xy() / m_ShadowMapSize;
 
     float3 anchorView = worldToView.transformPoint(anchor - preViewTranslation);
     anchorView.xy() = float2(round(anchorView.xy() / texelSize)) * texelSize; // why doesn't it compile without float2(...) ?
-    float3 center = viewToWorld.transformPoint(anchorView) + preViewTranslation;
+    float3 center = float3(viewToWorld.transformPoint(double3(anchorView))) + preViewTranslation;
 
     // Make sure we didn't move the anchor too far
     assert(length(center - anchor) < max(texelSize.x, texelSize.y) * 2);
@@ -123,6 +137,7 @@ bool PlanarShadowMap::SetupDynamicDirectionalLightView(const DirectionalLight& l
     bool viewIsModified = m_View->GetViewMatrix() != worldToView || any(m_View->GetProjectionMatrix(false) != projection);
 
     m_View->SetMatrices(worldToView, projection);
+    m_View->UpdateCache();
 
     m_FadeRangeTexels = clamp(
         float2(fadeRangeWorld * m_ShadowMapSize) / (halfShadowBoxSize.xy() * 2.f),
@@ -130,6 +145,17 @@ bool PlanarShadowMap::SetupDynamicDirectionalLightView(const DirectionalLight& l
         m_ShadowMapSize * 0.5f);
 
     return viewIsModified;
+}
+
+void PlanarShadowMap::SetupProxyView()
+{
+    affine3 viewToWorld = lookatZ(float3(0, 1, 0), float3(0, 0, 1));
+    affine3 worldToView = transpose(viewToWorld);
+
+    float4x4 projection = orthoProjD3DStyle(-1.f, 1.f, -1.f, 1.f, -1.f, 1.f);
+
+    m_View->SetMatrices(worldToView, projection);
+    m_View->UpdateCache();
 }
 
 void PlanarShadowMap::SetLitOutOfBounds(bool litOutOfBounds)
@@ -158,7 +184,7 @@ dm::float4x4 PlanarShadowMap::GetWorldToUvzwMatrix() const
         0.5f,  0.5f, 0, 1,
     };
 
-    return m_View->m_ViewProjMatrix * matClipToUvzw;
+    return m_View->GetViewProjectionMatrix() * matClipToUvzw;
 }
 
 const ICompositeView& PlanarShadowMap::GetView() const
@@ -193,7 +219,7 @@ const IShadowMap* PlanarShadowMap::GetPerObjectShadow(uint32_t index) const
 
 dm::int2 PlanarShadowMap::GetTextureSize() const
 {
-    const nvrhi::TextureDesc& textureDesc = m_ShadowMapTexture->GetDesc();
+    const nvrhi::TextureDesc& textureDesc = m_ShadowMapTexture->getDesc();
     return int2(textureDesc.width, textureDesc.height);
 }
 

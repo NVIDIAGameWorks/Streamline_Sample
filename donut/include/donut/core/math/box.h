@@ -1,3 +1,25 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 
 namespace donut::math
@@ -176,15 +198,18 @@ namespace donut::math
 
         box operator * (const affine<T, n>& transform) const
         {
-            vector<T, n> corner = getCorner(0);
-            corner = transform.transformPoint(corner);
-            box<T, n> result = { corner, corner };
-            for (int i = 1; i < numCorners; ++i)
+            // fast method to apply an affine transform to an AABB
+            box<T, n> result;
+            result.m_mins = transform.m_translation;
+            result.m_maxs = transform.m_translation;
+            const vector<T, n>* row = &transform.m_linear.row0;
+            for (int i = 0; i < n; i++)
             {
-                corner = getCorner(i);
-                corner = transform.transformPoint(corner);
-                result.m_mins = min(result.m_mins, corner);
-                result.m_maxs = max(result.m_maxs, corner);
+                vector<T, n> e = (&m_mins.x)[i] * *row;
+                vector<T, n> f = (&m_maxs.x)[i] * *row;
+                result.m_mins += min(e, f);
+                result.m_maxs += max(e, f);
+                ++row;
             }
             return result;
         }
@@ -207,30 +232,13 @@ namespace donut::math
     };
 
 	
-	// Concrete boxes, and their maker functions,
-	// for the most common types and dimensions
+	// Concrete boxes for the most common types and dimensions
 
 #define DEFINE_CONCRETE_BOXES(type, name, ptype) \
 			typedef box<type, 2> name##2; \
 			typedef box<type, 3> name##3; \
 			typedef box<type, 2> const & name##2_arg; \
-			typedef box<type, 3> const & name##3_arg; \
-			[[deprecated]] inline name##2 make##name##2(type minx, type miny, type maxx, type maxy) \
-				{ return name##2(type##2(minx, miny), type##2(maxx, maxy)); } \
-			[[deprecated]] inline name##2 make##name##2Empty() \
-				{ return name##2::empty(); } \
-			[[deprecated]] inline name##2 make##name##2(ptype##2_arg mins, ptype##2_arg maxs) \
-				{ return name##2(mins, maxs); } \
-			[[deprecated]] inline name##2 make##name##2(int numPoints, ptype##2 const * points) \
-				{ return name##2(numPoints, points); } \
-			[[deprecated]] inline name##3 make##name##3(type minx, type miny, type minz, type maxx, type maxy, type maxz) \
-				{ return name##3(type##3(minx, miny, minz), type##3(maxx, maxy, maxz)); } \
-			[[deprecated]] inline name##3 make##name##3Empty() \
-				{ return name##3::empty(); } \
-			[[deprecated]] inline name##3 make##name##3(ptype##3_arg mins, ptype##3_arg maxs) \
-				{ return name##3(mins, maxs); } \
-			[[deprecated]] inline name##3 make##name##3(int numPoints, ptype##3 const * points) \
-				{ return name##3(numPoints, points); } \
+			typedef box<type, 3> const & name##3_arg;
 
 	DEFINE_CONCRETE_BOXES(float, box, float);
 	DEFINE_CONCRETE_BOXES(int, ibox, int);
@@ -239,48 +247,6 @@ namespace donut::math
 
 
 	// Other math functions
-
-	template <typename T, int n>
-    [[deprecated]] box<T, n> boxUnion(box<T, n> const & a, vector<T, n> const & b)
-	{
-        return a | b;
-	}
-
-	template <typename T, int n>
-    [[deprecated]] box<T, n> boxUnion(box<T, n> const & a, box<T, n> const & b)
-	{
-        return a | b;
-	}
-
-	template <typename T, int n>
-    [[deprecated]] box<T, n> boxIntersection(box<T, n> const & a, box<T, n> const & b)
-	{
-        return a & b;
-	}
-
-	template <typename T, int n>
-    [[deprecated]] box<T, n> boxTranslate(box<T, n> const & a, vector<T, n> const & b)
-	{
-        return a.translate(b);
-	}
-
-	template <typename T, int n>
-    [[deprecated]] box<T, n> boxGrow(box<T, n> const & a, vector<T, n> const & b)
-	{
-        return a.grow(b);
-	}
-
-	template <typename T, int n>
-    [[deprecated]] box<T, n> boxGrow(box<T, n> const & a, T b)
-	{
-        return a.grow(b);
-	}
-
-	template <typename T, int n>
-    [[deprecated]] box<T, n> boxTransform(box<T, n> const & a, affine<T, n> const & aff)
-	{
-        return a * aff;
-	}
 
 	template <typename T, int n>
 	T distance(box<T, n> const & a, vector<T, n> const & b)
@@ -321,11 +287,5 @@ namespace donut::math
 	bool isfinite(box<T, n> const & a)
 	{
         return a.isfinite();
-	}
-
-	template <typename T, int n>
-    [[deprecated]] box<int, n> round(box<T, n> const & a)
-	{
-        return a.round();
 	}
 }

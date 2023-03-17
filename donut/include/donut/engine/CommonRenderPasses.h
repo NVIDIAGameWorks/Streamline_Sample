@@ -1,60 +1,106 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 
-#include <memory>
-#include <nvrhi/nvrhi.h>
 #include <donut/core/math/math.h>
+#include <nvrhi/nvrhi.h>
+#include <memory>
 #include <unordered_map>
 
 namespace donut::engine
 {
-
+    class BindingCache;
     class ShaderFactory;
+
+    constexpr uint32_t c_MaxRenderPassConstantBufferVersions = 16;
+        
+    enum class BlitSampler
+    {
+        Point,
+        Linear,
+        Sharpen
+    };
+
+    struct BlitParameters
+    {
+        nvrhi::IFramebuffer* targetFramebuffer = nullptr;
+        nvrhi::Viewport targetViewport;
+        dm::box2 targetBox = dm::box2(0.f, 1.f);
+
+        nvrhi::ITexture* sourceTexture = nullptr;
+        uint32_t sourceArraySlice = 0;
+        uint32_t sourceMip = 0;
+        dm::box2 sourceBox = dm::box2(0.f, 1.f);
+
+        BlitSampler sampler = BlitSampler::Linear;
+        nvrhi::BlendState::RenderTarget blendState;
+        nvrhi::Color blendConstantColor = nvrhi::Color(0.f);
+    };
 
     class CommonRenderPasses
     {
     protected:
         nvrhi::DeviceHandle m_Device;
 
-        std::unordered_map<nvrhi::FramebufferInfo, nvrhi::GraphicsPipelineHandle> m_BlitPsoCache;
-        std::unordered_map<nvrhi::FramebufferInfo, nvrhi::GraphicsPipelineHandle> m_SharpenPsoCache;
-
-        struct BlitBindingKey
+        struct PsoCacheKey
         {
-            nvrhi::TextureHandle texture;
-            uint32_t arraySlice;
-            uint32_t mipLevel;
+            nvrhi::FramebufferInfo fbinfo;
+            nvrhi::IShader* shader;
+            nvrhi::BlendState::RenderTarget blendState;
 
-            bool operator==(const BlitBindingKey& other) const { return texture == other.texture && arraySlice == other.arraySlice && mipLevel == other.mipLevel; }
-            bool operator!=(const BlitBindingKey& other) const { return !(*this == other); }
+            bool operator==(const PsoCacheKey& other) const { return fbinfo == other.fbinfo && shader == other.shader && blendState == other.blendState; }
+            bool operator!=(const PsoCacheKey& other) const { return !(*this == other); }
 
             struct Hash
             {
-                size_t operator ()(const BlitBindingKey& s) const {
-                    return (std::hash<nvrhi::ITexture*>()(s.texture) << 2)
-                        ^ (std::hash<uint32_t>()(s.arraySlice) << 1)
-                        ^ (std::hash<uint32_t>()(s.mipLevel) << 0);
+                size_t operator ()(const PsoCacheKey& s) const
+                {
+                    size_t hash = 0;
+                    nvrhi::hash_combine(hash, s.fbinfo);
+                    nvrhi::hash_combine(hash, s.shader);
+                    nvrhi::hash_combine(hash, s.blendState);
+                    return hash;
                 }
             };
         };
 
-        std::unordered_map<BlitBindingKey, nvrhi::BindingSetHandle, BlitBindingKey::Hash> m_BlitBindingCache;
-
-        nvrhi::IBindingSet* GetCachedBindingSet(nvrhi::ITexture* texture, uint32_t arraySlice, uint32_t mipLevel);
-
+        std::unordered_map<PsoCacheKey, nvrhi::GraphicsPipelineHandle, PsoCacheKey::Hash> m_BlitPsoCache;
+        
     public:
         nvrhi::ShaderHandle m_FullscreenVS;
         nvrhi::ShaderHandle m_FullscreenAtOneVS;
         nvrhi::ShaderHandle m_RectVS;
         nvrhi::ShaderHandle m_BlitPS;
+        nvrhi::ShaderHandle m_BlitArrayPS;
         nvrhi::ShaderHandle m_SharpenPS;
-        nvrhi::BufferHandle m_BlitCB;
-
+        nvrhi::ShaderHandle m_SharpenArrayPS;
+        
         nvrhi::TextureHandle m_BlackTexture;
         nvrhi::TextureHandle m_GrayTexture;
         nvrhi::TextureHandle m_WhiteTexture;
         nvrhi::TextureHandle m_BlackTexture2DArray;
+        nvrhi::TextureHandle m_WhiteTexture2DArray;
         nvrhi::TextureHandle m_BlackCubeMapArray;
-        nvrhi::TextureHandle m_ZeroDepthStencil2DArray;
 
         nvrhi::SamplerHandle m_PointClampSampler;
         nvrhi::SamplerHandle m_LinearClampSampler;
@@ -62,25 +108,13 @@ namespace donut::engine
         nvrhi::SamplerHandle m_AnisotropicWrapSampler;
 
         nvrhi::BindingLayoutHandle m_BlitBindingLayout;
+        
+        CommonRenderPasses(nvrhi::IDevice* device, std::shared_ptr<ShaderFactory> shaderFactory);
+        
+        void BlitTexture(nvrhi::ICommandList* commandList, const BlitParameters& params, BindingCache* bindingCache = nullptr);
 
-    public:
-        CommonRenderPasses(nvrhi::DeviceHandle device, std::shared_ptr<ShaderFactory> shaderFactory);
-
-        void ResetBindingCache();
-        nvrhi::BindingSetHandle CreateBlitBindingSet(nvrhi::ITexture* source, uint32_t sourceArraySlice, uint32_t sourceMip);
-
-        void BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, nvrhi::IBindingSet* source);
-        void BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, dm::box2_arg targetBox, nvrhi::IBindingSet* source, dm::box2_arg sourceBox);
-
-        void BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, nvrhi::ITexture* source, uint32_t sourceArraySlice = 0, uint32_t sourceMip = 0);
-        void BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, dm::box2_arg targetBox, nvrhi::ITexture* source, dm::box2_arg sourceBox, uint32_t sourceArraySlice = 0, uint32_t sourceMip = 0);
-
-        void BlitSharpen(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, float sharpenFactor, nvrhi::IBindingSet* source);
-        void BlitSharpen(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, float sharpenFactor, dm::box2_arg targetBox, nvrhi::IBindingSet* source, dm::box2_arg sourceBox);
-
-        void BlitSharpen(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, float sharpenFactor, nvrhi::ITexture* source, uint32_t sourceArraySlice = 0, uint32_t sourceMip = 0);
-        void BlitSharpen(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, float sharpenFactor, dm::box2_arg targetBox, nvrhi::ITexture* source, dm::box2_arg sourceBox, uint32_t sourceArraySlice = 0, uint32_t sourceMip = 0);
-
+        // Simplified form of BlitTexture that blits the entire source texture, mip 0 slice 0, into the entire target framebuffer using a linear sampler.
+        void BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* targetFramebuffer, nvrhi::ITexture* sourceTexture, BindingCache* bindingCache = nullptr);
     };
 
 }

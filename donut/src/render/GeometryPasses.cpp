@@ -1,9 +1,29 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/render/GeometryPasses.h>
-#include <donut/engine/SceneTypes.h>
+#include <donut/engine/SceneGraph.h>
 #include <donut/engine/FramebufferFactory.h>
 #include <donut/render/DrawStrategy.h>
-#include <assert.h>
 
 using namespace donut::math;
 using namespace donut::engine;
@@ -14,15 +34,16 @@ void donut::render::RenderView(
     const IView* view, 
     const IView* viewPrev,
     nvrhi::IFramebuffer* framebuffer,
-    const MeshInstance* const* pMeshInstances,
-    size_t numMeshInstances,
-    IGeometryPass& pass, 
+    IDrawStrategy& drawStrategy,
+    IGeometryPass& pass,
+    GeometryPassContext& passContext,
     bool materialEvents)
 {
-    pass.PrepareForView(commandList, view, viewPrev);
+    pass.SetupView(passContext, commandList, view, viewPrev);
 
-    Material* lastMaterial = nullptr;
-    BufferGroup* lastBuffers = nullptr;
+    const Material* lastMaterial = nullptr;
+    const BufferGroup* lastBuffers = nullptr;
+    nvrhi::RasterCullMode lastCullMode = nvrhi::RasterCullMode::Back;
 
     bool drawMaterial = true;
     bool stateValid = false;
@@ -32,11 +53,12 @@ void donut::render::RenderView(
     nvrhi::GraphicsState graphicsState;
     graphicsState.framebuffer = framebuffer;
     graphicsState.viewport = view->GetViewportState();
+    graphicsState.shadingRateState = view->GetVariableRateShadingState();
 
     nvrhi::DrawArguments currentDraw;
     currentDraw.instanceCount = 0;
 
-    auto flushDraw = [commandList, materialEvents, &currentDraw, &eventMaterial](const Material* material)
+    auto flushDraw = [commandList, materialEvents, &graphicsState, &currentDraw, &eventMaterial, &pass, &passContext](const Material* material)
     {
         if (currentDraw.instanceCount == 0)
             return;
@@ -57,21 +79,20 @@ void donut::render::RenderView(
             }
         }
 
+        pass.SetPushConstants(passContext, commandList, graphicsState, currentDraw);
+
         commandList->drawIndexed(currentDraw);
         currentDraw.instanceCount = 0;
     };
-
-    for(size_t index = 0; index < numMeshInstances; index++)
+    
+    while (const DrawItem* item = drawStrategy.GetNextItem())
     {
-        const MeshInstance* instance = pMeshInstances[index];
-        const MeshInfo* mesh = instance->mesh;
-
-        if (mesh->material == nullptr)
+        if (item->material == nullptr)
             continue;
 
 
-        bool newBuffers = mesh->buffers != lastBuffers;
-        bool newMaterial = mesh->material != lastMaterial;
+        bool newBuffers = item->buffers != lastBuffers;
+        bool newMaterial = item->material != lastMaterial || item->cullMode != lastCullMode;
 
         if (newBuffers || newMaterial)
         {
@@ -80,17 +101,18 @@ void donut::render::RenderView(
 
         if (newBuffers)
         {
-            pass.SetupInputBuffers(mesh->buffers, graphicsState);
+            pass.SetupInputBuffers(passContext, item->buffers, graphicsState);
 
-            lastBuffers = mesh->buffers;
+            lastBuffers = item->buffers;
             stateValid = false;
         }
 
         if (newMaterial)
         {
-            drawMaterial = pass.SetupMaterial(mesh->material, graphicsState);
+            drawMaterial = pass.SetupMaterial(passContext, item->material, item->cullMode, graphicsState);
 
-            lastMaterial = mesh->material;
+            lastMaterial = item->material;
+            lastCullMode = item->cullMode;
             stateValid = false;
         }
 
@@ -103,19 +125,21 @@ void donut::render::RenderView(
             }
 
             nvrhi::DrawArguments args;
-            args.vertexCount = mesh->numIndices;
+            args.vertexCount = item->geometry->numIndices;
             args.instanceCount = 1;
-            args.startVertexLocation = mesh->vertexOffset;
-            args.startIndexLocation = mesh->indexOffset;
-            args.startInstanceLocation = instance->instanceOffset;
+            args.startVertexLocation = item->mesh->vertexOffset + item->geometry->vertexOffsetInMesh;
+            args.startIndexLocation = item->mesh->indexOffset + item->geometry->indexOffsetInMesh;
+            args.startInstanceLocation = item->instance->GetInstanceIndex();
 
-            if (currentDraw.instanceCount > 0 && currentDraw.startIndexLocation == args.startIndexLocation && currentDraw.startInstanceLocation + currentDraw.instanceCount == args.startInstanceLocation)
+            if (currentDraw.instanceCount > 0 && 
+                currentDraw.startIndexLocation == args.startIndexLocation && 
+                currentDraw.startInstanceLocation + currentDraw.instanceCount == args.startInstanceLocation)
             {
                 currentDraw.instanceCount += 1;
             }
             else
             {
-                flushDraw(mesh->material);
+                flushDraw(item->material);
 
                 currentDraw = args;
             }
@@ -133,8 +157,10 @@ void donut::render::RenderCompositeView(
     const ICompositeView* compositeView, 
     const ICompositeView* compositeViewPrev, 
     FramebufferFactory& framebufferFactory,
-    BasicDrawStrategy& drawStrategy,
-    IGeometryPass& pass, 
+    const std::shared_ptr<engine::SceneGraphNode>& rootNode,
+    IDrawStrategy& drawStrategy,
+    IGeometryPass& pass,
+    GeometryPassContext& passContext,
     const char* passEvent, 
     bool materialEvents)
 {
@@ -148,9 +174,7 @@ void donut::render::RenderCompositeView(
         // the views must have the same topology
         assert(compositeView->GetNumChildViews(supportedViewTypes) == compositeViewPrev->GetNumChildViews(supportedViewTypes));
     }
-
-    std::vector<const MeshInstance*> instancesToDraw;
-
+    
     for (uint viewIndex = 0; viewIndex < compositeView->GetNumChildViews(supportedViewTypes); viewIndex++)
     {
         const IView* view = compositeView->GetChildView(supportedViewTypes, viewIndex);
@@ -158,11 +182,11 @@ void donut::render::RenderCompositeView(
 
         assert(view != nullptr);
 
-        drawStrategy.PrepareForView(view, instancesToDraw);
+        drawStrategy.PrepareForView(rootNode, *view);
 
         nvrhi::IFramebuffer* framebuffer = framebufferFactory.GetFramebuffer(*view);
 
-        RenderView(commandList, view, viewPrev, framebuffer, instancesToDraw.data(), instancesToDraw.size(), pass, materialEvents);
+        RenderView(commandList, view, viewPrev, framebuffer, drawStrategy, pass, passContext, materialEvents);
     }
 
     if (passEvent)

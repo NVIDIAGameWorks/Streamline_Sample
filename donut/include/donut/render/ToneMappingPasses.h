@@ -1,8 +1,30 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 
-#include <memory>
-#include <map>
 #include <nvrhi/nvrhi.h>
+#include <memory>
+#include <unordered_map>
 
 namespace donut::engine
 {
@@ -39,9 +61,7 @@ namespace donut::render
 
         nvrhi::BufferHandle m_ToneMappingCB;
         nvrhi::BufferHandle m_HistogramBuffer;
-        nvrhi::TextureHandle m_ExposureTexture;
-        nvrhi::ResourceStates::Enum m_HistogramBufferState;
-        nvrhi::ResourceStates::Enum m_ExposureTextureState;
+        nvrhi::BufferHandle m_ExposureBuffer;
         float m_FrameTime = 0.f;
 
         nvrhi::TextureHandle m_ColorLUT;
@@ -64,17 +84,22 @@ namespace donut::render
         std::unordered_map<nvrhi::ITexture*, nvrhi::BindingSetHandle> m_RenderBindingSets;
 
     public:
+        struct CreateParameters
+        {
+            bool isTextureArray = false;
+            uint32_t histogramBins = 256;
+            uint32_t numConstantBufferVersions = 16;
+            nvrhi::IBuffer* exposureBufferOverride = nullptr;
+            nvrhi::ITexture* colorLUT = nullptr;
+        };
+
         ToneMappingPass(
             nvrhi::IDevice* device,
             std::shared_ptr<engine::ShaderFactory> shaderFactory,
             std::shared_ptr<engine::CommonRenderPasses> commonPasses,
             std::shared_ptr<engine::FramebufferFactory> framebufferFactory,
             const engine::ICompositeView& compositeView,
-            uint32_t histogramBins,
-            bool isTextureArray,
-            nvrhi::ITexture* exposureTextureOverride = nullptr,
-            nvrhi::ResourceStates::Enum exposureTextureStateOverride = nvrhi::ResourceStates::COMMON,
-            nvrhi::ITexture* colorLUT = nullptr);
+            const CreateParameters& params);
 
         void Render(
             nvrhi::ICommandList* commandList,
@@ -88,17 +113,13 @@ namespace donut::render
             const engine::ICompositeView& compositeView,
             nvrhi::ITexture* sourceTexture);
 
-        nvrhi::TextureHandle GetExposureTexture();
-        nvrhi::ResourceStates::Enum GetExposureTextureState();
-
+        nvrhi::BufferHandle GetExposureBuffer();
+        
         void AdvanceFrame(float frameTime);
 
         void ResetExposure(nvrhi::ICommandList* commandList, float initialExposure = 0.f);
         void ResetHistogram(nvrhi::ICommandList* commandList);
         void AddFrameToHistogram(nvrhi::ICommandList* commandList, const engine::ICompositeView& compositeView, nvrhi::ITexture* sourceTexture);
         void ComputeExposure(nvrhi::ICommandList* commandList, const ToneMappingParameters& params);
-
-        void BeginTrackingState(nvrhi::ICommandList* commandList);
-        void SaveCurrentState(nvrhi::ICommandList* commandList);
     };
 }

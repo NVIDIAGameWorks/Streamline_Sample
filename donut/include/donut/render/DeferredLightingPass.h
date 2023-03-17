@@ -1,8 +1,32 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 
-#include <memory>
-#include <nvrhi/nvrhi.h>
 #include <donut/core/math/math.h>
+#include <nvrhi/nvrhi.h>
+#include <memory>
+#include <unordered_map>
+#include <donut/engine/BindingCache.h>
 
 namespace donut::engine
 {
@@ -17,57 +41,63 @@ namespace donut::engine
 
 namespace donut::render
 {
+    class GBufferRenderTargets;
+    
     class DeferredLightingPass
     {
     private:
         nvrhi::DeviceHandle m_Device;
-        nvrhi::ShaderHandle m_PixelShader;
+
+        nvrhi::ShaderHandle m_ComputeShader;
         nvrhi::SamplerHandle m_ShadowSampler;
         nvrhi::SamplerHandle m_ShadowSamplerComparison;
         nvrhi::BufferHandle m_DeferredLightingCB;
-        nvrhi::GraphicsPipelineHandle m_Pso;
-        nvrhi::BindingLayoutHandle m_GBufferBindingLayout;
-        nvrhi::BindingLayoutHandle m_ShadowMapBindingLayout;
-        nvrhi::BindingLayoutHandle m_LightProbeBindingLayout;
+        nvrhi::ComputePipelineHandle m_Pso;
 
-        std::unordered_map<nvrhi::ITexture*, nvrhi::BindingSetHandle> m_ShadowMapBindingSets;
-        std::unordered_map<nvrhi::ITexture*, nvrhi::BindingSetHandle> m_LightProbeBindingSets;
+        nvrhi::BindingLayoutHandle m_BindingLayout;
+        engine::BindingCache m_BindingSets;
 
         std::shared_ptr<engine::CommonRenderPasses> m_CommonPasses;
 
     protected:
 
-        virtual nvrhi::ShaderHandle CreatePixelShader(engine::ShaderFactory& shaderFactory, const engine::IView* sampleView);
-        virtual nvrhi::BindingLayoutHandle CreateGBufferBindingLayout();
+        virtual nvrhi::ShaderHandle CreateComputeShader(
+            engine::ShaderFactory& shaderFactory);
 
     public:
+        struct Inputs
+        {
+            nvrhi::ITexture* depth = nullptr;
+            nvrhi::ITexture* gbufferNormals = nullptr;
+            nvrhi::ITexture* gbufferDiffuse = nullptr;
+            nvrhi::ITexture* gbufferSpecular = nullptr;
+            nvrhi::ITexture* gbufferEmissive = nullptr;
+            nvrhi::ITexture* indirectDiffuse = nullptr;
+            nvrhi::ITexture* indirectSpecular = nullptr;
+            nvrhi::ITexture* shadowChannels = nullptr;
+            nvrhi::ITexture* ambientOcclusion = nullptr;
+            nvrhi::ITexture* output = nullptr;
+
+            const std::vector<std::shared_ptr<engine::Light>>* lights = nullptr;
+            const std::vector<std::shared_ptr<engine::LightProbe>>* lightProbes = nullptr;
+
+            dm::float3 ambientColorTop = 0.f;
+            dm::float3 ambientColorBottom = 0.f;
+
+            // Fills the GBuffer-related textures (depth, normals, etc.) from the provided structure.
+            void SetGBuffer(const GBufferRenderTargets& targets);
+        };
+
         DeferredLightingPass(
             nvrhi::IDevice* device,
             std::shared_ptr<engine::CommonRenderPasses> commonPasses);
 
-        virtual void Init(
-            engine::ShaderFactory& shaderFactory,
-            engine::FramebufferFactory& framebufferFactory,
-            const engine::ICompositeView& compositeView);
-
-        nvrhi::BindingSetHandle CreateGBufferBindingSet(
-            nvrhi::TextureSubresourceSet subresources,
-            nvrhi::ITexture* depth,
-            nvrhi::ITexture* albedo,
-            nvrhi::ITexture* specular,
-            nvrhi::ITexture* normals,
-            nvrhi::ITexture* indirectDiffuse = nullptr,
-            nvrhi::ITexture* indirectSpecular = nullptr);
+        virtual void Init(const std::shared_ptr<engine::ShaderFactory>& shaderFactory);
 
         void Render(
             nvrhi::ICommandList* commandList,
-            engine::FramebufferFactory& framebufferFactory,
             const engine::ICompositeView& compositeView,
-            const std::vector<std::shared_ptr<engine::Light>>& lights,
-            nvrhi::IBindingSet* gbufferBindingSet,
-            dm::float3 ambientColorTop,
-            dm::float3 ambientColorBottom,
-            const std::vector<std::shared_ptr<engine::LightProbe>>& lightProbes,
+            const Inputs& inputs,
             dm::float2 randomOffset = dm::float2::zero());
 
         void ResetBindingCache();

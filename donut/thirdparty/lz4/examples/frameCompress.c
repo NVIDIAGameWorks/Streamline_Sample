@@ -32,12 +32,12 @@ static void safe_fwrite(void* buf, size_t eltSize, size_t nbElt, FILE* f)
 {
     size_t const writtenSize = fwrite(buf, eltSize, nbElt, f);
     size_t const expectedSize = eltSize * nbElt;
-    assert(expectedSize / nbElt == eltSize);   /* check overflow */
+    if (nbElt>0) assert(expectedSize / nbElt == eltSize);  /* check overflow */
     if (writtenSize < expectedSize) {
         if (ferror(f))  /* note : ferror() must follow fwrite */
             fprintf(stderr, "Write failed \n");
         else
-            fprintf(stderr, "Short write \n");
+            fprintf(stderr, "Write too short \n");
         exit(1);
     }
 }
@@ -125,7 +125,7 @@ compress_file(FILE* f_in, FILE* f_out)
     assert(f_in != NULL);
     assert(f_out != NULL);
 
-    /* ressource allocation */
+    /* resource allocation */
     LZ4F_compressionContext_t ctx;
     size_t const ctxCreation = LZ4F_createCompressionContext(&ctx, LZ4F_VERSION);
     void* const src = malloc(IN_CHUNK_SIZE);
@@ -139,7 +139,7 @@ compress_file(FILE* f_in, FILE* f_out)
                                         src, IN_CHUNK_SIZE,
                                         outbuff, outbufCapacity);
     } else {
-        printf("error : ressource allocation failed \n");
+        printf("error : resource allocation failed \n");
     }
 
     LZ4F_freeCompressionContext(ctx);   /* supports free on NULL */
@@ -286,7 +286,7 @@ static int decompress_file(FILE* f_in, FILE* f_out)
 {
     assert(f_in != NULL); assert(f_out != NULL);
 
-    /* Ressource allocation */
+    /* Resource allocation */
     void* const src = malloc(IN_CHUNK_SIZE);
     if (!src) { perror("decompress_file(src)"); return 1; }
 

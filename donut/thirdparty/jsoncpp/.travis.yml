@@ -1,59 +1,71 @@
-# Build matrix / environment variable are explained on:
+# Build matrix / environment variables are explained on:
 # http://about.travis-ci.org/docs/user/build-configuration/
-# This file can be validated on:
-# http://lint.travis-ci.org/
-# See also
-# http://stackoverflow.com/questions/22111549/travis-ci-with-clang-3-4-and-c11/30925448#30925448
-# to allow C++11, though we are not yet building with -std=c++11
-
-#before_install: pyenv install 3.5.4 && pyenv global 3.5.4
-before_install: pyenv global 3.6
-# https://docs.travis-ci.com/user/languages/python/
-# "for Trusty, this means 2.7.6 and 3.4.3"
-install:
-- if [[ $TRAVIS_OS_NAME == osx ]]; then
-     brew update;
-     brew install python3 ninja;
-     python3 -m venv venv;
-     source venv/bin/activate;
-  elif [[ $TRAVIS_OS_NAME == linux ]]; then
-     wget https://github.com/ninja-build/ninja/releases/download/v1.7.2/ninja-linux.zip;
-     unzip -q ninja-linux.zip -d build;
-  fi
-- pip3 install meson
-# /usr/bin/gcc is 4.6 always, but gcc-X.Y is available.
-- if [[ $CXX = g++ ]]; then export CXX="g++-4.9" CC="gcc-4.9"; fi
-# /usr/bin/clang has a conflict with gcc, so use clang-X.Y.
-- if [[ $CXX = clang++ ]]; then export CXX="clang++-3.5" CC="clang-3.5"; fi
-- echo ${PATH}
-- ls /usr/local
-- ls /usr/local/bin
-- export PATH="${PWD}"/build:/usr/local/bin:/usr/bin:${PATH}
-- echo ${CXX}
-- ${CXX} --version
-- which valgrind
+# This file can be validated on: http://www.yamllint.com/
+# Or using the Ruby based travel command line tool:
+# gem install travis --no-rdoc --no-ri
+# travis lint .travis.yml
+language: cpp
+sudo: false
 addons:
+  homebrew:
+    packages:
+    - clang-format
+    - meson
+    - ninja
+    update: false # do not update homebrew by default
   apt:
     sources:
     - ubuntu-toolchain-r-test
-    - llvm-toolchain-precise-3.5
+    - llvm-toolchain-xenial-8
     packages:
-    - gcc-4.9
-    - g++-4.9
-    - clang-3.5
+    - clang-format-8
+    - clang-8
     - valgrind
-os:
-  - linux
-language: cpp
-compiler:
-  - gcc
-  - clang
-script: ./travis.sh
-env:
-  matrix:
-    - LIB_TYPE=static BUILD_TYPE=release
-    - LIB_TYPE=shared BUILD_TYPE=debug
+matrix:
+  allow_failures:
+    - os: osx
+  include:
+    - name: Mac clang meson static release testing
+      os: osx
+      osx_image: xcode11
+      compiler: clang
+      env:
+         CXX="clang++"
+         CC="clang"
+         LIB_TYPE=static
+         BUILD_TYPE=release
+      script: ./.travis_scripts/meson_builder.sh
+    - name: Linux xenial clang meson static release testing
+      os: linux
+      dist: xenial
+      compiler: clang
+      env:
+         CXX="clang++"
+         CC="clang"
+         LIB_TYPE=static
+         BUILD_TYPE=release
+      # before_install and install steps only needed for linux meson builds
+      before_install:
+          - source ./.travis_scripts/travis.before_install.${TRAVIS_OS_NAME}.sh
+      install:
+           - source ./.travis_scripts/travis.install.${TRAVIS_OS_NAME}.sh
+      script: ./.travis_scripts/meson_builder.sh
+    - name: Linux xenial gcc cmake coverage
+      os: linux
+      dist: xenial
+      compiler: gcc
+      env:
+        CXX=g++
+        CC=gcc
+        DO_Coverage=ON
+        BUILD_TOOL="Unix Makefiles"
+        BUILD_TYPE=Debug
+        LIB_TYPE=shared
+        DESTDIR=/tmp/cmake_json_cpp
+      before_install:
+          - pip install --user cpp-coveralls
+      script: ./.travis_scripts/cmake_builder.sh
+      after_success:
+          - coveralls --include src/lib_json --include include
 notifications:
   email: false
-dist: trusty
-sudo: false

@@ -1,3 +1,24 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/engine/View.h>
 #include <algorithm>
@@ -35,44 +56,61 @@ void IView::FillPlanarViewConstants(PlanarViewConstants& constants) const
     constants.pixelOffset = GetPixelOffset();
 }
 
-PlanarView::PlanarView()
-    : m_PixelOffsetMatrix(float4x4::identity())
-    , m_PixelOffsetMatrixInv(float4x4::identity())
-    , m_ViewMatrix(affine3::identity())
-    , m_ProjMatrix(float4x4::identity())
-    , m_ArraySlice(0)
+void PlanarView::UpdateCache()
 {
+    if (m_CacheValid)
+        return;
 
+    m_PixelOffsetMatrix = affineToHomogeneous(translation(
+        float3(2.f * m_PixelOffset.x / (m_Viewport.maxX - m_Viewport.minX), 
+            -2.f * m_PixelOffset.y / (m_Viewport.maxY - m_Viewport.minY), 0.f)));
+    m_PixelOffsetMatrixInv = inverse(m_PixelOffsetMatrix);
+
+    m_ViewProjMatrix = affineToHomogeneous(m_ViewMatrix) * m_ProjMatrix;
+    m_ViewProjOffsetMatrix = m_ViewProjMatrix * m_PixelOffsetMatrix;
+
+    m_ViewMatrixInv = inverse(m_ViewMatrix);
+    m_ProjMatrixInv = inverse(m_ProjMatrix);
+    m_ViewProjMatrixInv = m_ProjMatrixInv * affineToHomogeneous(m_ViewMatrixInv);
+    m_ViewProjOffsetMatrixInv = m_PixelOffsetMatrixInv * m_ViewProjMatrixInv;
+
+    m_ReverseDepth = (m_ProjMatrix[2][2] == 0.f);
+    m_ViewFrustum = frustum(m_ViewProjMatrix, m_ReverseDepth);
+    m_ProjectionFrustum = frustum(m_ProjMatrix, m_ReverseDepth);
+
+    m_IsMirrored = determinant(m_ViewMatrix.m_linear) < 0.f;
+
+    m_CacheValid = true;
+}
+
+void PlanarView::EnsureCacheIsValid() const
+{
+    assert(m_CacheValid); // Call UpdateCache() after changing any view parameters
 }
 
 void PlanarView::SetViewport(const nvrhi::Viewport& viewport)
 {
     m_Viewport = viewport;
-    m_ScissorRect = nvrhi::Rect(int(floor(viewport.minX)), int(ceil(viewport.maxX)), int(floor(viewport.minY)), int(ceil(viewport.maxY)));
+    m_ScissorRect = nvrhi::Rect(viewport);
+    m_CacheValid = false;
+}
+
+void PlanarView::SetVariableRateShadingState(const nvrhi::VariableRateShadingState& shadingRateState)
+{
+    m_ShadingRateState = shadingRateState;
 }
 
 void PlanarView::SetMatrices(const affine3& viewMatrix, const float4x4& projMatrix)
 {
     m_ViewMatrix = viewMatrix;
     m_ProjMatrix = projMatrix;
-    m_ViewProjMatrix = affineToHomogeneous(viewMatrix) * projMatrix;
-    m_ViewProjOffsetMatrix = m_ViewProjMatrix * m_PixelOffsetMatrix;
-
-    m_ViewMatrixInv = inverse(viewMatrix);
-    m_ProjMatrixInv = inverse(projMatrix);
-    m_ViewProjMatrixInv = m_ProjMatrixInv * affineToHomogeneous(m_ViewMatrixInv);
-    m_ViewProjOffsetMatrixInv = m_PixelOffsetMatrixInv * m_ViewProjMatrixInv;
-
-    m_ReverseDepth = (projMatrix[2][2] == 0.f);
-    m_ViewFrustum = frustum(m_ViewProjMatrix, m_ReverseDepth);
-    m_ProjectionFrustum = frustum(m_ProjMatrix, m_ReverseDepth);
+    m_CacheValid = false;
 }
 
 void PlanarView::SetPixelOffset(const float2 offset)
 {
     m_PixelOffset = offset;
-    m_PixelOffsetMatrix = affineToHomogeneous(translation(float3(2.f * offset.x / (m_Viewport.maxX - m_Viewport.minX), -2.f * offset.y / (m_Viewport.maxY - m_Viewport.minY), 0.f)));
-    m_PixelOffsetMatrixInv = inverse(m_PixelOffsetMatrix);
+    m_CacheValid = false;
 }
 
 void PlanarView::SetArraySlice(int arraySlice)
@@ -87,6 +125,11 @@ nvrhi::ViewportState PlanarView::GetViewportState() const
         .addScissorRect(m_ScissorRect);
 }
 
+nvrhi::VariableRateShadingState PlanarView::GetVariableRateShadingState() const
+{
+    return m_ShadingRateState;
+}
+
 nvrhi::TextureSubresourceSet PlanarView::GetSubresources() const
 {
     return nvrhi::TextureSubresourceSet(0, 1, m_ArraySlice, 1);
@@ -94,6 +137,7 @@ nvrhi::TextureSubresourceSet PlanarView::GetSubresources() const
 
 bool PlanarView::IsReverseDepth() const
 {
+    EnsureCacheIsValid();
     return m_ReverseDepth;
 }
 
@@ -114,21 +158,25 @@ bool PlanarView::IsCubemapView() const
 
 float3 PlanarView::GetViewOrigin() const
 {
+    EnsureCacheIsValid();
     return m_ViewMatrixInv.m_translation;
 }
 
 float3 PlanarView::GetViewDirection() const
 {
+    EnsureCacheIsValid();
     return m_ViewMatrixInv.m_linear[2];
 }
 
 frustum PlanarView::GetViewFrustum() const
 {
+    EnsureCacheIsValid();
     return m_ViewFrustum;
 }
 
 frustum PlanarView::GetProjectionFrustum() const
 {
+    EnsureCacheIsValid();
     return m_ProjectionFrustum;
 }
 
@@ -139,26 +187,31 @@ affine3 PlanarView::GetViewMatrix() const
 
 affine3 PlanarView::GetInverseViewMatrix() const
 {
+    EnsureCacheIsValid();
     return m_ViewMatrixInv;
 }
 
 float4x4 PlanarView::GetProjectionMatrix(bool includeOffset) const
 {
+    EnsureCacheIsValid();
     return includeOffset ? m_ProjMatrix * m_PixelOffsetMatrix : m_ProjMatrix;
 }
 
 float4x4 PlanarView::GetInverseProjectionMatrix(bool includeOffset) const
 {
+    EnsureCacheIsValid();
     return includeOffset ? m_PixelOffsetMatrixInv * m_ProjMatrixInv : m_ProjMatrixInv;
 }
 
 float4x4 PlanarView::GetViewProjectionMatrix(bool includeOffset) const
 {
+    EnsureCacheIsValid();
     return includeOffset ? m_ViewProjOffsetMatrix : m_ViewProjMatrix;
 }
 
 float4x4 PlanarView::GetInverseViewProjectionMatrix(bool includeOffset) const
 {
+    EnsureCacheIsValid();
     return includeOffset ? m_ViewProjOffsetMatrixInv : m_ViewProjMatrixInv;
 }
 
@@ -172,9 +225,16 @@ float2 PlanarView::GetPixelOffset() const
     return m_PixelOffset;
 }
 
-bool PlanarView::IsMeshVisible(const dm::box3& bbox) const
+bool PlanarView::IsBoxVisible(const dm::box3& bbox) const
 {
+    EnsureCacheIsValid();
     return m_ViewFrustum.intersectsWith(bbox);
+}
+
+bool PlanarView::IsMirrored() const
+{
+    EnsureCacheIsValid();
+    return m_IsMirrored;
 }
 
 uint32_t IView::GetNumChildViews(ViewType::Enum supportedTypes) const
@@ -240,32 +300,16 @@ static const float3x3 g_CubemapViewMatrices[6] = {
     )
 };
 
-CubemapView::CubemapView()
-    : m_ViewMatrix(affine3::identity())
-    , m_ViewMatrixInv(affine3::identity())
-    , m_ProjMatrix(float4x4::identity())
-    , m_ProjMatrixInv(float4x4::identity())
-    , m_ViewProjMatrix(float4x4::identity())
-    , m_ViewProjMatrixInv(float4x4::identity())
-    , m_NearPlane(0.f)
-    , m_CullDistance(0.f)
-    , m_Center(0.f)
-    , m_FirstArraySlice(0)
+void CubemapView::EnsureCacheIsValid() const
 {
+    assert(m_CacheValid); // Call UpdateCache() after changing any view parameters
 }
 
 void CubemapView::SetTransform(affine3 viewMatrix, float zNear, float cullDistance, bool useReverseInfiniteProjections)
 {
-    m_ViewMatrix = viewMatrix * scaling(float3(1, 1, -1));
-    m_ViewMatrixInv = inverse(m_ViewMatrix);
-    m_ProjMatrix = affineToHomogeneous(scaling<float, 3>(1.0f / zNear));
-    m_ProjMatrixInv = inverse(m_ProjMatrix);
-    m_ViewProjMatrix = affineToHomogeneous(m_ViewMatrix) * m_ProjMatrix;
-    m_ViewProjMatrixInv = inverse(m_ViewProjMatrix);
+    m_ViewMatrix = viewMatrix;
     m_NearPlane = zNear;
     m_CullDistance = cullDistance;
-    m_Center = inverse(viewMatrix).m_translation;
-    m_CullingBox = box3(m_Center - m_CullDistance, m_Center + m_CullDistance);
 
     float4x4 faceProjMatrix;
     if (useReverseInfiniteProjections)
@@ -284,6 +328,8 @@ void CubemapView::SetTransform(affine3 viewMatrix, float zNear, float cullDistan
 
         m_FaceViews[face].SetMatrices(faceViewMatrix, faceProjMatrix);
     }
+
+    m_CacheValid = false;
 }
 
 void CubemapView::SetArrayViewports(int resolution, int firstArraySlice)
@@ -297,6 +343,25 @@ void CubemapView::SetArrayViewports(int resolution, int firstArraySlice)
     }
 }
 
+void CubemapView::UpdateCache()
+{
+    for (auto& view : m_FaceViews)
+        view.UpdateCache();
+
+    if (m_CacheValid)
+        return;
+
+    m_ViewMatrixInv = inverse(m_ViewMatrix);
+    m_ProjMatrix = affineToHomogeneous(scaling<float, 3>(1.0f / m_NearPlane));
+    m_ProjMatrixInv = inverse(m_ProjMatrix);
+    m_ViewProjMatrix = affineToHomogeneous(m_ViewMatrix) * m_ProjMatrix;
+    m_ViewProjMatrixInv = inverse(m_ViewProjMatrix);
+    m_Center = inverse(m_ViewMatrix).m_translation;
+    m_CullingBox = box3(m_Center - m_CullDistance, m_Center + m_CullDistance);
+
+    m_CacheValid = true;
+}
+
 float CubemapView::GetNearPlane() const
 {
     return m_NearPlane;
@@ -304,6 +369,7 @@ float CubemapView::GetNearPlane() const
 
 box3 CubemapView::GetCullingBox() const
 {
+    EnsureCacheIsValid();
     return m_CullingBox;
 }
 
@@ -311,21 +377,34 @@ nvrhi::ViewportState CubemapView::GetViewportState() const
 {
     nvrhi::ViewportState result;
 
-    for (int face = 0; face < 6; face++)
+    for (const auto& faceView : m_FaceViews)
     {
-        result.addViewport(m_FaceViews[face].m_Viewport);
-        result.addScissorRect(m_FaceViews[face].m_ScissorRect);
+        result.addViewport(faceView.GetViewport());
+        result.addScissorRect(faceView.GetScissorRect());
     }
 
     return result;
 }
 
-bool CubemapView::IsMeshVisible(const dm::box3& bbox) const
+nvrhi::VariableRateShadingState CubemapView::GetVariableRateShadingState() const
 {
+    // currently don't support VRS with cubemaps
+    return nvrhi::VariableRateShadingState();
+}
+
+bool CubemapView::IsBoxVisible(const dm::box3& bbox) const
+{
+    EnsureCacheIsValid();
+
     if (m_CullDistance <= 0)
         return true;
 
     return m_CullingBox.intersects(bbox);
+}
+
+bool CubemapView::IsMirrored() const
+{
+    return false;
 }
 
 nvrhi::TextureSubresourceSet CubemapView::GetSubresources() const
@@ -366,32 +445,17 @@ float3 CubemapView::GetViewDirection() const
 
 frustum CubemapView::GetViewFrustum() const
 {
-    box3 b = box3(m_Center - m_CullDistance, m_Center + m_CullDistance);
+    EnsureCacheIsValid();
 
-    frustum f;
-    f.planes[frustum::LEFT_PLANE] = plane(1.f, 0.f, 0.f, b.m_mins.x);
-    f.planes[frustum::RIGHT_PLANE] = plane(-1.f, 0.f, 0.f, -b.m_maxs.x);
-    f.planes[frustum::BOTTOM_PLANE] = plane(0.f, 1.f, 0.f, b.m_mins.y);
-    f.planes[frustum::TOP_PLANE] = plane(0.f, -1.f, 0.f, -b.m_maxs.y);
-    f.planes[frustum::NEAR_PLANE] = plane(0.f, 0.f, 1.f, b.m_mins.z);
-    f.planes[frustum::FAR_PLANE] = plane(0.f, 0.f, -1.f, -b.m_maxs.z);
-
-    return f;
+    return frustum::fromBox(m_CullingBox);
 }
 
-dm::frustum donut::engine::CubemapView::GetProjectionFrustum() const
+frustum CubemapView::GetProjectionFrustum() const
 {
+    EnsureCacheIsValid();
+
     box3 b = box3(-m_CullDistance, m_CullDistance);
-
-    frustum f;
-    f.planes[frustum::LEFT_PLANE] = plane(1.f, 0.f, 0.f, b.m_mins.x);
-    f.planes[frustum::RIGHT_PLANE] = plane(-1.f, 0.f, 0.f, -b.m_maxs.x);
-    f.planes[frustum::BOTTOM_PLANE] = plane(0.f, 1.f, 0.f, b.m_mins.y);
-    f.planes[frustum::TOP_PLANE] = plane(0.f, -1.f, 0.f, -b.m_maxs.y);
-    f.planes[frustum::NEAR_PLANE] = plane(0.f, 0.f, 1.f, b.m_mins.z);
-    f.planes[frustum::FAR_PLANE] = plane(0.f, 0.f, -1.f, -b.m_maxs.z);
-
-    return f;
+    return frustum::fromBox(b);
 }
 
 affine3 CubemapView::GetViewMatrix() const
@@ -401,30 +465,35 @@ affine3 CubemapView::GetViewMatrix() const
 
 affine3 CubemapView::GetInverseViewMatrix() const
 {
+    EnsureCacheIsValid();
     return m_ViewMatrixInv;
 }
 
 float4x4 CubemapView::GetProjectionMatrix(bool includeOffset) const
 {
     (void)includeOffset;
+    EnsureCacheIsValid();
     return m_ProjMatrix;
 }
 
 float4x4 CubemapView::GetInverseProjectionMatrix(bool includeOffset) const
 {
     (void)includeOffset;
+    EnsureCacheIsValid();
     return m_ProjMatrixInv;
 }
 
 float4x4 CubemapView::GetViewProjectionMatrix(bool includeOffset) const
 {
     (void)includeOffset;
+    EnsureCacheIsValid();
     return m_ViewProjMatrix;
 }
 
 float4x4 CubemapView::GetInverseViewProjectionMatrix(bool includeOffset) const
 {
     (void)includeOffset;
+    EnsureCacheIsValid();
     return m_ViewProjMatrixInv;
 }
 

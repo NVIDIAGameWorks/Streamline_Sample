@@ -1,3 +1,24 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/render/EnvironmentMapPass.h>
 #include <donut/engine/FramebufferFactory.h>
@@ -22,21 +43,22 @@ EnvironmentMapPass::EnvironmentMapPass(
     : m_CommonPasses(commonPasses)
     , m_FramebufferFactory(framebufferFactory)
 {
-    nvrhi::TextureDimension envMapDimension = environmentMap->GetDesc().dimension;
+    nvrhi::TextureDimension envMapDimension = environmentMap->getDesc().dimension;
     bool isCubeMap = (envMapDimension == nvrhi::TextureDimension::TextureCube) || 
         (envMapDimension == nvrhi::TextureDimension::TextureCubeArray);
 
     std::vector<engine::ShaderMacro> PSMacros;
     PSMacros.push_back(engine::ShaderMacro("LATLONG_TEXTURE", isCubeMap ? "0" : "1"));
 
-    m_PixelShader = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/environment_map_ps.hlsl", "main", 
-        &PSMacros, nvrhi::ShaderType::SHADER_PIXEL);
+    m_PixelShader = shaderFactory->CreateShader("donut/passes/environment_map_ps.hlsl", "main", 
+        &PSMacros, nvrhi::ShaderType::Pixel);
 
     nvrhi::BufferDesc constantBufferDesc;
     constantBufferDesc.byteSize = sizeof(SkyConstants);
-    constantBufferDesc.debugName = "DeferredLightingConstants";
+    constantBufferDesc.debugName = "SkyConstants";
     constantBufferDesc.isConstantBuffer = true;
     constantBufferDesc.isVolatile = true;
+    constantBufferDesc.maxVersions = engine::c_MaxRenderPassConstantBufferVersions;
     m_SkyCB = device->createBuffer(constantBufferDesc);
 
     const IView* sampleView = compositeView.GetChildView(ViewType::PLANAR, 0);
@@ -44,15 +66,16 @@ EnvironmentMapPass::EnvironmentMapPass(
 
     {
         nvrhi::BindingLayoutDesc layoutDesc;
-        layoutDesc.PS = {
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer },
-            { 0, nvrhi::ResourceType::Texture_SRV },
-            { 0, nvrhi::ResourceType::Sampler }
+        layoutDesc.visibility = nvrhi::ShaderType::Pixel;
+        layoutDesc.bindings = {
+            nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
+            nvrhi::BindingLayoutItem::Texture_SRV(0),
+            nvrhi::BindingLayoutItem::Sampler(0)
         };
         m_RenderBindingLayout = device->createBindingLayout(layoutDesc);
 
         nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.PS = {
+        bindingSetDesc.bindings = {
             nvrhi::BindingSetItem::ConstantBuffer(0, m_SkyCB),
             nvrhi::BindingSetItem::Texture_SRV(0, environmentMap),
             nvrhi::BindingSetItem::Sampler(0, commonPasses->m_LinearWrapSampler)
@@ -60,18 +83,19 @@ EnvironmentMapPass::EnvironmentMapPass(
         m_RenderBindingSet = device->createBindingSet(bindingSetDesc, m_RenderBindingLayout);
 
         nvrhi::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
+        pipelineDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
         pipelineDesc.VS = sampleView->IsReverseDepth() ? m_CommonPasses->m_FullscreenVS : m_CommonPasses->m_FullscreenAtOneVS;
         pipelineDesc.PS = m_PixelShader;
         pipelineDesc.bindingLayouts = { m_RenderBindingLayout };
 
-        pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        pipelineDesc.renderState.depthStencilState.depthEnable = true;
-        pipelineDesc.renderState.depthStencilState.depthFunc = sampleView->IsReverseDepth() 
-            ? nvrhi::DepthStencilState::COMPARISON_GREATER_EQUAL 
-            : nvrhi::DepthStencilState::COMPARISON_LESS_EQUAL;
-        pipelineDesc.renderState.depthStencilState.depthWriteMask = nvrhi::DepthStencilState::DEPTH_WRITE_MASK_ZERO;
-        pipelineDesc.renderState.depthStencilState.stencilEnable = false;
+        pipelineDesc.renderState.rasterState.setCullNone();
+        pipelineDesc.renderState.depthStencilState
+            .enableDepthTest()
+            .disableDepthWrite()
+            .disableStencil()
+            .setDepthFunc(sampleView->IsReverseDepth()
+                ? nvrhi::ComparisonFunc::GreaterOrEqual
+                : nvrhi::ComparisonFunc::LessOrEqual);
 
         m_RenderPso = device->createGraphicsPipeline(pipelineDesc, sampleFramebuffer);
     }

@@ -1,28 +1,65 @@
-#include <stdio.h>
-#include <assert.h>
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
+/*
+License for glfw
+
+Copyright (c) 2002-2006 Marcus Geelnard
+
+Copyright (c) 2006-2019 Camilla Lowy
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would
+   be appreciated but is not required.
+
+2. Altered source versions must be plainly marked as such, and must not
+   be misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source
+   distribution.
+*/
 
 #include <string>
 #include <algorithm>
 #include <locale>
-#include <codecvt>
 
 #include <donut/app/DeviceManager.h>
 #include <donut/core/log.h>
 
-#include <windows.h>
-#include <DXGI1_3.h>
+#include <Windows.h>
+#include <dxgi1_3.h>
 #include <dxgidebug.h>
 
-#include <GLFW/glfw3.h>
-
-#include <nvrhi/d3d11/d3d11.h>
-#include <nvrhi/validation/validation.h>
-
-#ifndef USE_SL
-#pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "dxgi.lib")
-#endif
-
+#include <nvrhi/d3d11.h>
+#include <nvrhi/validation.h>
 
 using nvrhi::RefCountPtr;
 
@@ -33,63 +70,63 @@ class DeviceManager_DX11 : public DeviceManager
     RefCountPtr<ID3D11Device> m_Device;
     RefCountPtr<ID3D11DeviceContext> m_ImmediateContext;
     RefCountPtr<IDXGISwapChain> m_SwapChain;
-    DXGI_SWAP_CHAIN_DESC    m_SwapChainDesc;
-    HWND                    m_hWnd;
+    DXGI_SWAP_CHAIN_DESC m_SwapChainDesc{};
+    HWND m_hWnd = nullptr;
 
     nvrhi::DeviceHandle m_NvrhiDevice;
-    nvrhi::TextureHandle m_rhiBackBuffer;
+    nvrhi::TextureHandle m_RhiBackBuffer;
     RefCountPtr<ID3D11Texture2D> m_D3D11BackBuffer;
 
-    std::string                     m_rendererString = "";
+    std::string m_RendererString;
 
 public:
-    virtual const char *GetRendererString() override
+    [[nodiscard]] const char* GetRendererString() const override
     {
-        return m_rendererString.c_str();
+        return m_RendererString.c_str();
     }
 
-    virtual nvrhi::IDevice *GetDevice() override
+    [[nodiscard]] nvrhi::IDevice* GetDevice() const override
     {
         return m_NvrhiDevice;
     }
 
-	virtual void BeginFrame() override;
+    void BeginFrame() override;
 
-    virtual void ReportLiveObjects() override;
+    void ReportLiveObjects() override;
 
-    virtual nvrhi::GraphicsAPI GetGraphicsAPI() const override
+    [[nodiscard]] nvrhi::GraphicsAPI GetGraphicsAPI() const override
     {
         return nvrhi::GraphicsAPI::D3D11;
     }
 protected:
-    virtual bool CreateDeviceAndSwapChain() override;
-    virtual void DestroyDeviceAndSwapChain() override;
-    virtual void ResizeSwapChain() override;
+    bool CreateDeviceAndSwapChain() override;
+    void DestroyDeviceAndSwapChain() override;
+    void ResizeSwapChain() override;
 
-    virtual nvrhi::ITexture* GetCurrentBackBuffer() override
+    nvrhi::ITexture* GetCurrentBackBuffer() override
     {
-        return m_rhiBackBuffer;
+        return m_RhiBackBuffer;
     }
 
-    virtual nvrhi::ITexture* GetBackBuffer(uint32_t index) override
+    nvrhi::ITexture* GetBackBuffer(uint32_t index) override
     {
         if (index == 0)
-            return m_rhiBackBuffer;
+            return m_RhiBackBuffer;
 
         return nullptr;
     }
 
-    virtual uint32_t GetCurrentBackBufferIndex() override
+    uint32_t GetCurrentBackBufferIndex() override
     {
         return 0;
     }
 
-    virtual uint32_t GetBackBufferCount() override
+    uint32_t GetBackBufferCount() override
     {
         return 1;
     }
 
-    virtual void Present() override;
+    void Present() override;
 
 
 private:
@@ -158,7 +195,7 @@ static bool MoveWindowOntoAdapter(IDXGIAdapter* targetAdapter, RECT& rect)
     unsigned int outputNo = 0;
     while (SUCCEEDED(hres))
     {
-        IDXGIOutput* pOutput = NULL;
+        IDXGIOutput* pOutput = nullptr;
         hres = targetAdapter->EnumOutputs(outputNo++, &pOutput);
 
         if (SUCCEEDED(hres) && pOutput)
@@ -170,10 +207,10 @@ static bool MoveWindowOntoAdapter(IDXGIAdapter* targetAdapter, RECT& rect)
             const int centreY = (int)desktop.top + (int)(desktop.bottom - desktop.top) / 2;
             const int winW = rect.right - rect.left;
             const int winH = rect.bottom - rect.top;
-            int left = centreX - winW / 2;
-            int right = left + winW;
-            int top = centreY - winH / 2;
-            int bottom = top + winH;
+            const int left = centreX - winW / 2;
+            const int right = left + winW;
+            const int top = centreY - winH / 2;
+            const int bottom = top + winH;
             rect.left = std::max(left, (int)desktop.left);
             rect.right = std::min(right, (int)desktop.right);
             rect.bottom = std::min(bottom, (int)desktop.bottom);
@@ -189,25 +226,25 @@ static bool MoveWindowOntoAdapter(IDXGIAdapter* targetAdapter, RECT& rect)
 
 void DeviceManager_DX11::BeginFrame()
 {
-	DXGI_SWAP_CHAIN_DESC newSwapChainDesc;
-	if (SUCCEEDED(m_SwapChain->GetDesc(&newSwapChainDesc)))
-	{
-		if (m_SwapChainDesc.Windowed != newSwapChainDesc.Windowed)
-		{
-			BackBufferResizing();
+    DXGI_SWAP_CHAIN_DESC newSwapChainDesc;
+    if (SUCCEEDED(m_SwapChain->GetDesc(&newSwapChainDesc)))
+    {
+        if (m_SwapChainDesc.Windowed != newSwapChainDesc.Windowed)
+        {
+            BackBufferResizing();
 
-			m_SwapChainDesc = newSwapChainDesc;
-			m_DeviceParams.backBufferWidth = newSwapChainDesc.BufferDesc.Width;
-			m_DeviceParams.backBufferHeight = newSwapChainDesc.BufferDesc.Height;
+            m_SwapChainDesc = newSwapChainDesc;
+            m_DeviceParams.backBufferWidth = newSwapChainDesc.BufferDesc.Width;
+            m_DeviceParams.backBufferHeight = newSwapChainDesc.BufferDesc.Height;
 
-			if (newSwapChainDesc.Windowed)
-				glfwSetWindowMonitor(m_Window, nullptr, 50, 50, newSwapChainDesc.BufferDesc.Width, newSwapChainDesc.BufferDesc.Height, 0);
+            if (newSwapChainDesc.Windowed)
+                glfwSetWindowMonitor(m_Window, nullptr, 50, 50, newSwapChainDesc.BufferDesc.Width, newSwapChainDesc.BufferDesc.Height, 0);
 
-			ResizeSwapChain();
-			BackBufferResized();
-		}
+            ResizeSwapChain();
+            BackBufferResized();
+        }
 
-	}
+    }
 }
 
 void DeviceManager_DX11::ReportLiveObjects()
@@ -230,7 +267,6 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
     RECT rect = { 0, 0, LONG(m_DeviceParams.backBufferWidth), LONG(m_DeviceParams.backBufferHeight) };
     AdjustWindowRect(&rect, windowStyle, FALSE);
 
-
     RefCountPtr<IDXGIAdapter> targetAdapter;
     
     if (m_DeviceParams.adapter)
@@ -243,7 +279,11 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
 
         if (!targetAdapter)
         {
+#pragma warning(push)
+#pragma warning(disable: 4244) // warning C4244: 'argument': conversion from 'wchar_t' to 'const _Elem', possible loss of data
+                               // There is no standard way to do the conversion safely in c++17, std::codecvt is deprecated.
             std::string adapterNameStr(m_DeviceParams.adapterNameSubstring.begin(), m_DeviceParams.adapterNameSubstring.end());
+#pragma warning(pop)
 
             donut::log::error("Could not find an adapter matching %s\n", adapterNameStr.c_str());
             return false;
@@ -255,32 +295,17 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
         targetAdapter->GetDesc(&aDesc);
 
         std::wstring adapterName = aDesc.Description;
-        m_rendererString = std::string(adapterName.begin(), adapterName.end());
+        m_RendererString = std::string(adapterName.begin(), adapterName.end());
 
         m_IsNvidia = IsNvDeviceID(aDesc.VendorId);
     }
-
-
-    int widthBefore;
-    int heightBefore;
-    glfwGetWindowSize(m_Window, &widthBefore, &heightBefore);
 
     if (MoveWindowOntoAdapter(targetAdapter, rect))
     {
         glfwSetWindowPos(m_Window, rect.left, rect.top);
     }
 
-    int widthAfter;
-    int heightAfter;
-    glfwGetWindowSize(m_Window, &widthAfter, &heightAfter);
-    if ((widthBefore != widthAfter) || (heightBefore != heightAfter))
-    {
-        glfwSetWindowSize(m_Window, widthBefore, heightBefore);
-    }
-
     m_hWnd = glfwGetWin32Window(m_Window);
-
-    HRESULT hr = E_FAIL;
 
     RECT clientRect;
     GetClientRect(m_hWnd, &clientRect);
@@ -304,7 +329,7 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
     // Special processing for sRGB swap chain formats.
     // DXGI will not create a swap chain with an sRGB format, but its contents will be interpreted as sRGB.
     // So we need to use a non-sRGB format here, but store the true sRGB format for later framebuffer creation.
-    switch (m_DeviceParams.swapChainFormat)
+    switch (m_DeviceParams.swapChainFormat)  // NOLINT(clang-diagnostic-switch-enum)
     {
     case nvrhi::Format::SRGBA8_UNORM:
         m_SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -313,7 +338,7 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
         m_SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         break;
     default:
-        m_SwapChainDesc.BufferDesc.Format = nvrhi::d3d11::GetFormatMapping(m_DeviceParams.swapChainFormat).srvFormat;
+        m_SwapChainDesc.BufferDesc.Format = nvrhi::d3d11::convertFormat(m_DeviceParams.swapChainFormat);
         break;
     }
 
@@ -321,19 +346,19 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
     if (m_DeviceParams.enableDebugRuntime)
         createFlags |= D3D11_CREATE_DEVICE_DEBUG;
 
-    hr = D3D11CreateDeviceAndSwapChain(
-        targetAdapter,          // pAdapter
-        D3D_DRIVER_TYPE_UNKNOWN,// DriverType
-        NULL,                   // Software
-        createFlags,            // Flags
-        &m_DeviceParams.featureLevel,   // pFeatureLevels
-        1,                      // FeatureLevels
-        D3D11_SDK_VERSION,      // SDKVersion
-        &m_SwapChainDesc,       // pSwapChainDesc
-        &m_SwapChain,           // ppSwapChain
-        &m_Device,              // ppDevice
-        NULL,                   // pFeatureLevel
-        &m_ImmediateContext     // ppImmediateContext
+    const HRESULT hr = D3D11CreateDeviceAndSwapChain(
+        targetAdapter, // pAdapter
+        D3D_DRIVER_TYPE_UNKNOWN, // DriverType
+        nullptr, // Software
+        createFlags, // Flags
+        &m_DeviceParams.featureLevel, // pFeatureLevels
+        1, // FeatureLevels
+        D3D11_SDK_VERSION, // SDKVersion
+        &m_SwapChainDesc, // pSwapChainDesc
+        &m_SwapChain, // ppSwapChain
+        &m_Device, // ppDevice
+        nullptr, // pFeatureLevel
+        &m_ImmediateContext // ppImmediateContext
     );
     
     if(FAILED(hr))
@@ -341,11 +366,15 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
         return false;
     }
 
-    m_NvrhiDevice = nvrhi::DeviceHandle::Create(new nvrhi::d3d11::Device(&DefaultMessageCallback::GetInstance(), m_ImmediateContext));
+    nvrhi::d3d11::DeviceDesc deviceDesc;
+    deviceDesc.messageCallback = &DefaultMessageCallback::GetInstance();
+    deviceDesc.context = m_ImmediateContext;
+
+    m_NvrhiDevice = nvrhi::d3d11::createDevice(deviceDesc);
 
     if (m_DeviceParams.enableNvrhiValidationLayer)
     {
-        m_NvrhiDevice = nvrhi::DeviceHandle::Create(new nvrhi::validation::DeviceWrapper(m_NvrhiDevice));
+        m_NvrhiDevice = nvrhi::validation::createValidationLayer(m_NvrhiDevice);
     }
 
     bool ret = CreateRenderTarget();
@@ -360,7 +389,7 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
 
 void DeviceManager_DX11::DestroyDeviceAndSwapChain()
 {
-    m_rhiBackBuffer = nullptr;
+    m_RhiBackBuffer = nullptr;
     m_NvrhiDevice = nullptr;
 
     if (m_SwapChain)
@@ -379,9 +408,7 @@ bool DeviceManager_DX11::CreateRenderTarget()
 {
     ReleaseRenderTarget();
 
-    HRESULT hr;
-
-    hr = m_SwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&m_D3D11BackBuffer);
+    const HRESULT hr = m_SwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&m_D3D11BackBuffer);  // NOLINT(clang-diagnostic-language-extension-token)
     if (FAILED(hr))
     {
         return false;
@@ -397,7 +424,7 @@ bool DeviceManager_DX11::CreateRenderTarget()
     textureDesc.isRenderTarget = true;
     textureDesc.isUAV = false;
 
-    m_rhiBackBuffer = m_NvrhiDevice->createHandleForNativeTexture(nvrhi::ObjectTypes::D3D11_Resource, static_cast<ID3D11Resource*>(m_D3D11BackBuffer.Get()), textureDesc);
+    m_RhiBackBuffer = m_NvrhiDevice->createHandleForNativeTexture(nvrhi::ObjectTypes::D3D11_Resource, static_cast<ID3D11Resource*>(m_D3D11BackBuffer.Get()), textureDesc);
 
     if (FAILED(hr))
     {
@@ -409,7 +436,7 @@ bool DeviceManager_DX11::CreateRenderTarget()
 
 void DeviceManager_DX11::ReleaseRenderTarget()
 {
-    m_rhiBackBuffer = nullptr;
+    m_RhiBackBuffer = nullptr;
     m_D3D11BackBuffer = nullptr;
 }
 
@@ -420,19 +447,18 @@ void DeviceManager_DX11::ResizeSwapChain()
     if (!m_SwapChain)
         return;
 
-    HRESULT hr;
-    hr = m_SwapChain->ResizeBuffers(m_DeviceParams.swapChainBufferCount,
-                                    m_DeviceParams.backBufferWidth,
-                                    m_DeviceParams.backBufferHeight,
-                                    m_SwapChainDesc.BufferDesc.Format,
-                                    m_SwapChainDesc.Flags);
+    const HRESULT hr = m_SwapChain->ResizeBuffers(m_DeviceParams.swapChainBufferCount,
+                                            m_DeviceParams.backBufferWidth,
+                                            m_DeviceParams.backBufferHeight,
+                                            m_SwapChainDesc.BufferDesc.Format,
+                                            m_SwapChainDesc.Flags);
 
     if (FAILED(hr))
     {
         donut::log::fatal("ResizeBuffers failed");
     }
 
-    bool ret = CreateRenderTarget();
+    const bool ret = CreateRenderTarget();
     if (!ret)
     {
         donut::log::fatal("CreateRenderTarget failed");
@@ -444,7 +470,7 @@ void DeviceManager_DX11::Present()
     m_SwapChain->Present(m_DeviceParams.vsyncEnabled ? 1 : 0, 0);
 }
 
-DeviceManager *DeviceManager::CreateD3D11(void)
+DeviceManager *DeviceManager::CreateD3D11()
 {
     return new DeviceManager_DX11();
 }

@@ -1,27 +1,31 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include "light_cb.h"
 
-static const float PI = 3.1415926535;
+#include <donut/shaders/brdf.hlsli>
 
-float square(float x) { return x*x; }
-float4 square(float4 x) { return x*x; }
-
-float Lambert(SurfaceParams surface, float3 lightIncident)
-{
-    return max(0, -dot(surface.normal, lightIncident));
-}
-
-float3 slerp(float3 a, float3 b, float angle, float t)
-{
-    t = saturate(t);
-    float sin1 = sin(angle * t);
-    float sin2 = sin(angle * (1 - t));
-    float ta = sin1 / (sin1 + sin2);
-    float3 result = lerp(a, b, ta);
-    return normalize(result);
-}
-
-float GGX(SurfaceParams surface, float3 lightIncident, float3 viewIncident, float halfAngularSize)
+/*
+float _GGX(SurfaceParams surface, float3 lightIncident, float3 viewIncident, float halfAngularSize)
 {
     float3 N = surface.normal;
     float3 V = -viewIncident;
@@ -47,7 +51,7 @@ float GGX(SurfaceParams surface, float3 lightIncident, float3 viewIncident, floa
     float SphereNormalization = square(Alpha / CorrectedAlpha);
 
     // GGX / Trowbridge-Reitz NDF with normalization for sphere lights
-    float D = square(Alpha) / (PI * square(square(NdotH) * (square(Alpha) - 1) + 1)) * SphereNormalization;
+    float D = square(Alpha) / (M_PI * square(square(NdotH) * (square(Alpha) - 1) + 1)) * SphereNormalization;
     
     // Schlick model for geometric attenuation
     // The (NdotL * NdotV) term in the numerator is cancelled out by the same term in the denominator of the final result.
@@ -56,38 +60,43 @@ float GGX(SurfaceParams surface, float3 lightIncident, float3 viewIncident, floa
 
     return D * G / 4;
 }
+*/
 
 float GetClippedDiskArea(float3 incidentVector, float3 geometryNormal, float angularSize)
 {
     float NdotL = -dot(incidentVector, geometryNormal);
-    float angleAboveHorizon = PI * 0.5 - acos(NdotL);
+    float angleAboveHorizon = M_PI * 0.5 - acos(NdotL);
     float fractionAboveHorizon = angleAboveHorizon / angularSize;
 
     // an approximation
     return smoothstep(-0.5, 0.5, fractionAboveHorizon);
 }
 
-void ShadeSurface(LightConstants light, SurfaceParams surface, float3 viewIncident, out float o_diffuseRadiance, out float o_specularRadiance)
+void ShadeSurface(LightConstants light, MaterialSample materialSample, float3 surfacePos, float3 viewIncident, out float3 o_diffuseRadiance, out float3 o_specularRadiance)
 {
     o_diffuseRadiance = 0;
     o_specularRadiance = 0;
 
     float3 incidentVector = 0;
     float halfAngularSize = 0;
-    float attenuation = 1;
-    float spotlight = 1;
+    float irradiance = 0;
 
     if (light.lightType == LightType_Directional)
     {
         incidentVector = light.direction;
 
         halfAngularSize = light.angularSizeOrInvRange * 0.5;
+
+        irradiance = light.intensity;
     }
     else if (light.lightType == LightType_Spot || light.lightType == LightType_Point)
     {
-        float3 lightToSurface = surface.worldPos - light.position;
+        float3 lightToSurface = surfacePos - light.position;
         float distance = sqrt(dot(lightToSurface, lightToSurface));
+        float rDistance = 1.0 / distance;
+        incidentVector = lightToSurface * rDistance;
 
+        float attenuation = 1;
         if (light.angularSizeOrInvRange > 0)
         {
             attenuation = square(saturate(1.0 - square(square(distance * light.angularSizeOrInvRange))));
@@ -96,10 +105,7 @@ void ShadeSurface(LightConstants light, SurfaceParams surface, float3 viewIncide
                 return;
         }
 
-        float rDistance = 1.0 / distance;
-        incidentVector = lightToSurface * rDistance;
-
-        halfAngularSize = atan(min(light.radius * rDistance, 1));
+        float spotlight = 1;
         if (light.lightType == LightType_Spot)
         {
             float LdotD = dot(incidentVector, light.direction);
@@ -109,31 +115,46 @@ void ShadeSurface(LightConstants light, SurfaceParams surface, float3 viewIncide
             if (spotlight == 0)
                 return;
         }
+
+        if (light.radius > 0)
+        {
+            halfAngularSize = atan(min(light.radius * rDistance, 1));
+
+            // A good enough approximation for 2 * (1 - cos(halfAngularSize)), numerically more accurate for small angular sizes
+            float solidAngleOverPi = square(halfAngularSize);
+
+            float radianceTimesPi = light.intensity / square(light.radius);
+
+            irradiance = radianceTimesPi * solidAngleOverPi;
+        }
+        else
+        {
+            irradiance = light.intensity * square(rDistance);
+        }
+
+        irradiance *= spotlight * attenuation;
     }
     else
     {
         return;
     }
-
-    // Geometric shadowing for normal mapped surfaces.
-    // Disabled because the geometryNormal information is usually unavailable in deferred shading,
-    // and because some meshes misbehave with this shadowing enabled due to odd use of normal maps.
-    float clippedDisk = 1; //  GetClippedDiskArea(incidentVector, surface.geometryNormal, halfAngularSize * 2);
-
-    // A good enough approximation for (1 - cos(halfAngularSize)), numerically more accurate for small angular sizes
-    float solidAngleOverTwoPi = 0.5 * square(halfAngularSize); 
     
-    float diffuseIrradianceOverTwoPi = light.radiance * solidAngleOverTwoPi * clippedDisk * spotlight * attenuation;
+    o_diffuseRadiance = Lambert(materialSample.shadingNormal, incidentVector)
+        * materialSample.diffuseAlbedo
+        * irradiance;
 
-    o_diffuseRadiance = Lambert(surface, incidentVector) * diffuseIrradianceOverTwoPi;
-    o_specularRadiance = GGX(surface, incidentVector, viewIncident, halfAngularSize) * o_diffuseRadiance * 2 * PI;
+    o_specularRadiance = GGX_AnalyticalLights_times_NdotL(incidentVector, viewIncident, materialSample.shadingNormal,
+        materialSample.roughness, materialSample.specularF0, halfAngularSize) * irradiance;
 }
 
 float GetLightProbeWeight(LightProbeConstants lightProbe, float3 position)
 {
     float weight = 1;
 
-    [unroll]
+    // XXXX manuelk : work-around for a dxc/dxil compiler bug that crashes 
+    // the passes using this ; uncomment the unroll to test if the compiler
+    // has been fixed.
+    //[unroll]
     for (uint nPlane = 0; nPlane < 6; nPlane++)
     {
         float4 plane = lightProbe.frustumPlanes[nPlane];

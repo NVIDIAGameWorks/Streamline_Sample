@@ -1,10 +1,61 @@
-#include <stdio.h>
-#include <thread>
-#include <mutex>
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
+/*
+License for glfw
+
+Copyright (c) 2002-2006 Marcus Geelnard
+
+Copyright (c) 2006-2019 Camilla Lowy
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would
+   be appreciated but is not required.
+
+2. Altered source versions must be plainly marked as such, and must not
+   be misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source
+   distribution.
+*/
 
 #include <donut/app/DeviceManager.h>
 #include <donut/core/math/math.h>
 #include <donut/core/log.h>
+#include <nvrhi/utils.h>
+
+#include <cstdio>
+#include <iomanip>
+#include <thread>
+#include <sstream>
 
 #if USE_DX11
 #include <d3d11.h>
@@ -18,8 +69,6 @@
 #include <ShellScalingApi.h>
 #pragma comment(lib, "shcore.lib")
 #endif
-
-#include <GLFW/glfw3.h>
 
 using namespace donut::app;
 
@@ -116,12 +165,6 @@ static void MouseScrollCallback_GLFW(GLFWwindow *window, double xoffset, double 
     manager->MouseScrollUpdate(xoffset, yoffset);
 }
 
-static void DropFileCallback_GLFW(GLFWwindow *window, int path_count, const char* paths[])
-{
-    DeviceManager *manager = reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
-    manager->DropFileUpdate(path_count, paths);
-}
-
 static void JoystickConnectionCallback_GLFW(int joyId, int connectDisconnect)
 {
 	if (connectDisconnect == GLFW_CONNECTED)
@@ -169,9 +212,6 @@ static const struct
     { nvrhi::Format::RGBA32_FLOAT,      32, 32, 32, 32,  0,  0, },
 };
 
-static std::recursive_mutex g_deviceManagerMutex;
-static int g_nGLFWInitCalls = 0;
-
 bool DeviceManager::CreateWindowDeviceAndSwapChain(const DeviceCreationParameters& params, const char *windowTitle)
 {
 #ifdef _WINDOWS
@@ -184,21 +224,17 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain(const DeviceCreationParameter
     }
 #endif
 
-    // call glfwInit() only once
+    if (!glfwInit())
     {
-        std::lock_guard<std::recursive_mutex> lock(g_deviceManagerMutex);
-        if (++g_nGLFWInitCalls == 1)
-        {
-            if (!glfwInit())
-            {
-                return false;
-            }
-            glfwDefaultWindowHints();
-            glfwSetErrorCallback(ErrorCallback_GLFW);
-        }
+        return false;
     }
 
     this->m_DeviceParams = params;
+    m_RequestedVSync = params.vsyncEnabled;
+
+    glfwSetErrorCallback(ErrorCallback_GLFW);
+
+    glfwDefaultWindowHints();
 
     bool foundFormat = false;
     for (const auto& info : formatInfo)
@@ -225,20 +261,31 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain(const DeviceCreationParameter
 
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);   // Ignored for fullscreen
 
-	  m_Window = glfwCreateWindow(params.backBufferWidth, params.backBufferHeight,
+    m_Window = glfwCreateWindow(params.backBufferWidth, params.backBufferHeight,
                                 windowTitle ? windowTitle : "",
                                 params.startFullscreen ? glfwGetPrimaryMonitor() : nullptr,
                                 nullptr);
-
-    int fbWidth = 0, fbHeight = 0;
-    glfwGetFramebufferSize(m_Window, &fbWidth, &fbHeight);
-    m_DeviceParams.backBufferWidth = fbWidth;
-    m_DeviceParams.backBufferHeight = fbHeight;
 
     if (m_Window == nullptr)
     {
         return false;
     }
+
+    if (params.startFullscreen)
+    {
+        glfwSetWindowMonitor(m_Window, glfwGetPrimaryMonitor(), 0, 0,
+            m_DeviceParams.backBufferWidth, m_DeviceParams.backBufferHeight, m_DeviceParams.refreshRate);
+    }
+    else
+    {
+        int fbWidth = 0, fbHeight = 0;
+        glfwGetFramebufferSize(m_Window, &fbWidth, &fbHeight);
+        m_DeviceParams.backBufferWidth = fbWidth;
+        m_DeviceParams.backBufferHeight = fbHeight;
+    }
+
+    if (windowTitle)
+        m_WindowTitle = windowTitle;
 
     glfwSetWindowUserPointer(m_Window, this);
 
@@ -262,8 +309,7 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain(const DeviceCreationParameter
     glfwSetCursorPosCallback(m_Window, MousePosCallback_GLFW);
     glfwSetMouseButtonCallback(m_Window, MouseButtonCallback_GLFW);
     glfwSetScrollCallback(m_Window, MouseScrollCallback_GLFW);
-    glfwSetDropCallback(m_Window, DropFileCallback_GLFW);
-	glfwSetJoystickCallback(JoystickConnectionCallback_GLFW);
+	  glfwSetJoystickCallback(JoystickConnectionCallback_GLFW);
 
 	  // If there are multiple device managers, then this would be called by each one which isn't necessary
 	  // but should not hurt.
@@ -379,8 +425,10 @@ void DeviceManager::RunMessageLoop()
 
     while(!glfwWindowShouldClose(m_Window))
     {
-        glfwPollEvents();
 
+        if (m_callbacks.beforeFrame) m_callbacks.beforeFrame(*this);
+
+        glfwPollEvents();
         UpdateWindowSize();
 
         double curTime = glfwGetTime();
@@ -391,9 +439,15 @@ void DeviceManager::RunMessageLoop()
 
         if (m_windowVisible)
         {
+            if (m_callbacks.beforeAnimate) m_callbacks.beforeAnimate(*this);
             Animate(elapsedTime);
+            if (m_callbacks.afterAnimate) m_callbacks.afterAnimate(*this);
+            if (m_callbacks.beforeRender) m_callbacks.beforeRender(*this);
             Render();
+            if (m_callbacks.afterRender) m_callbacks.afterRender(*this);
+            if (m_callbacks.beforePresent) m_callbacks.beforePresent(*this);
             Present();
+            if (m_callbacks.afterPresent) m_callbacks.afterPresent(*this);
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(0));
@@ -402,7 +456,12 @@ void DeviceManager::RunMessageLoop()
 
         UpdateAverageFrameTime(elapsedTime);
         m_PreviousFrameTimestamp = curTime;
+
+        ++m_FrameIndex;
+
     }
+
+    GetDevice()->waitForIdle();
 }
 
 void DeviceManager::GetWindowDimensions(int& width, int& height)
@@ -431,7 +490,9 @@ void DeviceManager::UpdateWindowSize()
 
     m_windowVisible = true;
 
-    if (m_DeviceParams.backBufferWidth != width || m_DeviceParams.backBufferHeight != height)
+    if (int(m_DeviceParams.backBufferWidth) != width || 
+        int(m_DeviceParams.backBufferHeight) != height ||
+        (m_DeviceParams.vsyncEnabled != m_RequestedVSync && GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN))
     {
         // window is not minimized, and the size has changed
 
@@ -439,10 +500,13 @@ void DeviceManager::UpdateWindowSize()
 
         m_DeviceParams.backBufferWidth = width;
         m_DeviceParams.backBufferHeight = height;
+        m_DeviceParams.vsyncEnabled = m_RequestedVSync;
 
         ResizeSwapChain();
         BackBufferResized();
     }
+
+    m_DeviceParams.vsyncEnabled = m_RequestedVSync;
 }
 
 void DeviceManager::WindowPosCallback(int x, int y)
@@ -517,16 +581,6 @@ void DeviceManager::MouseScrollUpdate(double xoffset, double yoffset)
     for (auto it = m_vRenderPasses.crbegin(); it != m_vRenderPasses.crend(); it++)
     {
         bool ret = (*it)->MouseScrollUpdate(xoffset, yoffset);
-        if (ret)
-            break;
-    }
-}
-
-void DeviceManager::DropFileUpdate(int path_count, const char* paths[])
-{
-    for (auto it = m_vRenderPasses.crbegin(); it != m_vRenderPasses.crend(); it++)
-    {
-        bool ret = (*it)->DropFileUpdate(path_count, paths);
         if (ret)
             break;
     }
@@ -636,13 +690,7 @@ void DeviceManager::Shutdown()
         m_Window = nullptr;
     }
 
-    // call glfwTerminate() only once
-    std::lock_guard<std::recursive_mutex> lock(g_deviceManagerMutex);
-    assert(g_nGLFWInitCalls > 0);
-    if (--g_nGLFWInitCalls == 0)
-    {
-        glfwTerminate();
-    }
+    glfwTerminate();
 }
 
 nvrhi::IFramebuffer* donut::app::DeviceManager::GetCurrentFramebuffer()
@@ -656,6 +704,50 @@ nvrhi::IFramebuffer* donut::app::DeviceManager::GetFramebuffer(uint32_t index)
         return m_SwapChainFramebuffers[index];
 
     return nullptr;
+}
+
+void DeviceManager::SetWindowTitle(const char* title)
+{
+    assert(title);
+    if (m_WindowTitle == title)
+        return;
+
+    glfwSetWindowTitle(m_Window, title);
+
+    m_WindowTitle = title;
+}
+
+void DeviceManager::SetInformativeWindowTitle(const char* applicationName, const char* extraInfo)
+{
+    std::stringstream ss;
+    ss << applicationName;
+    ss << " (" << nvrhi::utils::GraphicsAPIToString(GetDevice()->getGraphicsAPI());
+
+    if (m_DeviceParams.enableDebugRuntime)
+    {
+        if (GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
+            ss << ", VulkanValidationLayer";
+        else
+            ss << ", DebugRuntime";
+    }
+
+    if (m_DeviceParams.enableNvrhiValidationLayer)
+    {
+        ss << ", NvrhiValidationLayer";
+    }
+
+    ss << ")";
+
+    double frameTime = GetAverageFrameTimeSeconds();
+    if (frameTime > 0)
+    {
+        ss << " - " << std::setprecision(4) << (1.0 / frameTime) << " FPS ";
+    }
+
+    if (extraInfo)
+        ss << extraInfo;
+
+    SetWindowTitle(ss.str().c_str());
 }
 
 donut::app::DeviceManager* donut::app::DeviceManager::Create(nvrhi::GraphicsAPI api)
@@ -686,7 +778,7 @@ DefaultMessageCallback& DefaultMessageCallback::GetInstance()
     return Instance;
 }
 
-void DefaultMessageCallback::message(nvrhi::MessageSeverity severity, const char* messageText, const char* file /*= nullptr*/, int line /*= 0*/)
+void DefaultMessageCallback::message(nvrhi::MessageSeverity severity, const char* messageText)
 {
     donut::log::Severity donutSeverity = donut::log::Severity::Info;
     switch (severity)
@@ -704,9 +796,6 @@ void DefaultMessageCallback::message(nvrhi::MessageSeverity severity, const char
         donutSeverity = donut::log::Severity::Fatal;
         break;
     }
-
-    if(file)
-        donut::log::message(donutSeverity, "%s (%s:%d)", messageText, file, line);
-    else
-        donut::log::message(donutSeverity, "%s", messageText);
+    
+    donut::log::message(donutSeverity, "%s", messageText);
 }

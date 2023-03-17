@@ -1,256 +1,220 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma pack_matrix(row_major)
 
-#include "forward_vertex.hlsli"
-#include "material_cb.h"
-#include "surface.hlsli"
+#include <donut/shaders/material_cb.h>
+#include <donut/shaders/brdf.hlsli>
+#include <donut/shaders/surface.hlsli>
 
-// Bindings - can be overriden before including this file if necessary
-
-#ifndef MATERIAL_CB_SLOT 
-#define MATERIAL_CB_SLOT b0
+// This toggle enables the derivation of baseColor and metalness parameters
+// for materials defined in the specular-glossiness model. If disabled,
+// specular-gloss materials will have default values in these fields.
+#ifndef ENABLE_METAL_ROUGH_RECONSTRUCTION
+#define ENABLE_METAL_ROUGH_RECONSTRUCTION 0
 #endif
 
-#ifndef MATERIAL_DIFFUSE_SLOT 
-#define MATERIAL_DIFFUSE_SLOT t0
-#endif
-
-#ifndef MATERIAL_SPECULAR_SLOT 
-#define MATERIAL_SPECULAR_SLOT t1
-#endif
-
-#ifndef MATERIAL_NORMALS_SLOT 
-#define MATERIAL_NORMALS_SLOT t2
-#endif
-
-#ifndef MATERIAL_EMISSIVE_SLOT 
-#define MATERIAL_EMISSIVE_SLOT t3
-#endif
-
-#ifndef MATERIAL_SAMPLER_SLOT 
-#define MATERIAL_SAMPLER_SLOT s0
-#endif
-
-cbuffer c_Material : register(MATERIAL_CB_SLOT)
+struct MaterialTextureSample
 {
-    MaterialConstants g_Material;
+    float4 baseOrDiffuse;
+    float4 metalRoughOrSpecular;
+    float4 normal;
+    float4 emissive;
+    float4 occlusion;
+    float4 transmission;
 };
 
-Texture2D t_Diffuse : register(MATERIAL_DIFFUSE_SLOT);
-Texture2D t_Specular : register(MATERIAL_SPECULAR_SLOT);
-Texture2D t_Normals : register(MATERIAL_NORMALS_SLOT);
-Texture2D t_Emissive : register(MATERIAL_EMISSIVE_SLOT);
-
-SamplerState s_MaterialSampler : register(MATERIAL_SAMPLER_SLOT);
-
-/** Convert RGB to normal
-*/
-float3 RgbToNormal(float3 rgb, out float len)
+MaterialTextureSample DefaultMaterialTextures()
 {
-    float3 n = rgb * 2 - 1;
+    MaterialTextureSample values;
+    values.baseOrDiffuse = 1.0;
+    values.metalRoughOrSpecular = 1.0;
+    values.emissive = 1.0;
+    values.normal = float4(0.5, 0.5, 1.0, 0.0);
+    values.occlusion = 1.0;
+    values.transmission = 1.0;
+    return values;
+}
 
-    len = length(n);
+// PBR workflow conversions (metal-rough <-> specular-gloss) are ported from the glTF repository:
+// https://github.com/KhronosGroup/glTF/tree/master/extensions/2.0/Khronos/KHR_materials_pbrSpecularGlossiness/examples 
+/*
+The MIT License
 
-    if (len > 0)
-        return n / len;
-    else
+Copyright (c) 2016-2017 Gary Hsu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+
+float GetPerceivedBrightness(float3 color)
+{
+    return sqrt(0.299 * color.r * color.r + 0.587 * color.g * color.g + 0.114 * color.b * color.b);
+}
+
+static const float c_DielectricSpecular = 0.04;
+
+float SolveMetalness(float diffuse, float specular, float oneMinusSpecularStrength)
+{
+    if (specular < c_DielectricSpecular)
         return 0;
+
+    float a = c_DielectricSpecular;
+    float b = diffuse * oneMinusSpecularStrength / (1 - c_DielectricSpecular) + specular - 2 * c_DielectricSpecular;
+    float c = c_DielectricSpecular - specular;
+    float D = max(b * b - 4 * a * c, 0);
+    return clamp((-b + sqrt(D)) / (2 * a), 0, 1);
 }
 
-/** Convert RG to normal
-*/
-float3 RgToNormal(float2 rg)
+void ConvertSpecularGlossToMetalRough(float3 diffuseColor, float3 specularColor, out float3 baseColor, out float metalness)
 {
-    float3 n;
-    n.xy = rg * 2 - 1;
+    const float epsilon = 1e-6;
 
-    // Saturate because error from BC5 can break the sqrt
-    n.z = saturate(dot(rg, rg)); // z = r*r + g*g
-    n.z = sqrt(1 - n.z);
-    return normalize(n);
+    float oneMinusSpecularStrength = 1.0 - max(specularColor.r, max(specularColor.g, specularColor.b));
+    metalness = SolveMetalness(GetPerceivedBrightness(diffuseColor), GetPerceivedBrightness(specularColor), oneMinusSpecularStrength);
+
+    float3 baseColorFromDiffuse = diffuseColor * (oneMinusSpecularStrength / (1 - c_DielectricSpecular) / max(1 - metalness, epsilon));
+    float3 baseColorFromSpecular = specularColor - c_DielectricSpecular * (1 - metalness) / max(metalness, epsilon);
+    baseColor = saturate(lerp(baseColorFromDiffuse, baseColorFromSpecular, metalness * metalness));
 }
 
-// ================================================================================================
-// Converts a Beckmann roughness parameter to a Phong specular power
-// ================================================================================================
-float RoughnessToSpecPower(in float m) {
-    return 2.0f / (m * m) - 2.0f;
-}
-
-// ================================================================================================
-// Converts a Blinn-Phong specular power to a Beckmann roughness parameter
-// ================================================================================================
-float SpecPowerToRoughness(in float s) {
-    return sqrt(2.0f / (s + 2.0f));
-}
-
-float AdjustRoughnessToksvig(float roughness, float normalMapLen)
+void ConvertMetalRoughToSpecularGloss(float3 baseColor, float metalness, out float3 diffuseColor, out float3 specularColor)
 {
-    float toksvigAggressiveness = 2;
-    float shininess = RoughnessToSpecPower(roughness) * toksvigAggressiveness;
-    float ft = normalMapLen / lerp(shininess, 1.0f, normalMapLen);
-    ft = max(ft, 0.01f);
-    return SpecPowerToRoughness(ft * shininess / toksvigAggressiveness);
+    const float epsilon = 1e-6;
+
+    specularColor = lerp(c_DielectricSpecular.xxx, baseColor, metalness);
+
+    float oneMinusSpecularStrength = 1.0 - max(specularColor.r, max(specularColor.g, specularColor.b));
+    diffuseColor = baseColor * ((1.0 - c_DielectricSpecular) * (1.0 - metalness) / max(oneMinusSpecularStrength, epsilon));
 }
 
-void DecodeSpecularTexture(inout SurfaceParams result, float4 specularTextureValue)
+// ----- End of PBR workflow conversion code -----
+
+
+void ApplyNormalMap(inout MaterialSample result, float4 tangent, float4 normalsTextureValue, float normalTextureScale)
 {
-    if (g_Material.specularTextureType == SpecularType_Scalar)
-    {
-        result.specularColor *= specularTextureValue.rrr;
-
-        result.diffuseColor *= (1 - result.specularColor);
-    }
-    else if (g_Material.specularTextureType == SpecularType_Color)
-    {
-        result.specularColor *= specularTextureValue.rgb;
-
-        if (specularTextureValue.a > 0)
-            result.roughness = 1 - specularTextureValue.a * (1 - result.roughness);
-
-        result.diffuseColor *= (1 - result.specularColor);
-    }
-    else if (g_Material.specularTextureType == SpecularType_MetalRough)
-    {
-        float occlusion = specularTextureValue.r;
-        float roughness = specularTextureValue.g;
-        float metallic = specularTextureValue.b;
-
-        float3 baseColor = result.diffuseColor;
-        result.diffuseColor = baseColor * (1 - metallic);
-        result.specularColor = lerp(0.04, baseColor, metallic);
-        result.roughness = 1 - (1 - roughness) * (1 - result.roughness);
-    }
-}
-
-void DecodeNormalsTexture(inout SurfaceParams result, SceneVertex vtx, float4 normalsTextureValue)
-{
-    float3 localNormal;
-    if (normalsTextureValue.z > 0)
-    {
-        float normalMapLen = 0;
-        localNormal = RgbToNormal(normalsTextureValue.xyz, normalMapLen);
-
-        if (normalMapLen > 0)
-        {
-            result.roughness = AdjustRoughnessToksvig(result.roughness, normalMapLen);
-        }
-    }
-    else
-        localNormal = RgToNormal(normalsTextureValue.xy);
+    float squareTangentLength = dot(tangent.xyz, tangent.xyz);
+    if (squareTangentLength == 0)
+        return;
     
-    localNormal.y = -localNormal.y;
+    if (tangent.w == 0)
+        return;
 
-    result.normal = normalize(vtx.m_tangent * localNormal.x + vtx.m_bitangent * localNormal.y + vtx.m_normal * localNormal.z);
+    normalsTextureValue.xy = normalsTextureValue.xy * 2.0 - 1.0;
+    normalsTextureValue.xy *= normalTextureScale;
+
+    if (normalsTextureValue.z <= 0)
+        normalsTextureValue.z = sqrt(saturate(1.0 - square(normalsTextureValue.x) - square(normalsTextureValue.y)));
+    else
+        normalsTextureValue.z = abs(normalsTextureValue.z * 2.0 - 1.0);
+
+    float squareNormalMapLength = dot(normalsTextureValue.xyz, normalsTextureValue.xyz);
+
+    if (squareNormalMapLength == 0)
+        return;
+        
+    float normalMapLen = sqrt(squareNormalMapLength);
+    float3 localNormal = normalsTextureValue.xyz / normalMapLen;
+
+    tangent.xyz *= rsqrt(squareTangentLength);
+    float3 bitangent = cross(result.geometryNormal, tangent.xyz) * tangent.w;
+
+    result.shadingNormal = normalize(tangent.xyz * localNormal.x + bitangent.xyz * localNormal.y + result.geometryNormal.xyz * localNormal.z);
 }
 
-SurfaceParams EvaluateSceneMaterial(SceneVertex vtx)
+MaterialSample EvaluateSceneMaterial(float3 normal, float4 tangent, MaterialConstants material, MaterialTextureSample textures)
 {
-    SurfaceParams result = DefaultSurfaceParams();
-    result.worldPos = vtx.m_pos;
-
-    float normalLength = length(vtx.m_normal);
-    if (normalLength == 0)
+    MaterialSample result = DefaultMaterialSample();
+    result.geometryNormal = normalize(normal);
+    result.shadingNormal = result.geometryNormal;
+    
+    if (material.flags & MaterialFlags_UseSpecularGlossModel)
     {
-        // Handle the case when something's wrong with vertex normals - we don't want NaNs or zeros in the normal channel
-        result.geometryNormal = normalize(cross(ddy(vtx.m_pos), ddx(vtx.m_pos)));
+        float3 diffuseColor = material.baseOrDiffuseColor.rgb * textures.baseOrDiffuse.rgb;
+        float3 specularColor = material.specularColor.rgb * textures.metalRoughOrSpecular.rgb;
+        result.roughness = 1.0 - textures.metalRoughOrSpecular.a * (1.0 - material.roughness);
+
+#if ENABLE_METAL_ROUGH_RECONSTRUCTION
+        ConvertSpecularGlossToMetalRough(diffuseColor, specularColor, result.baseColor, result.metalness);
+        result.hasMetalRoughParams = true;
+#endif
+
+        // Compute the BRDF inputs for the specular-gloss model
+        // https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_materials_pbrSpecularGlossiness/README.md#specular---glossiness
+        result.diffuseAlbedo = diffuseColor * (1.0 - max(specularColor.r, max(specularColor.g, specularColor.b)));
+        result.specularF0 = specularColor;
     }
     else
     {
-        // Just normalize
-        result.geometryNormal = vtx.m_normal / normalLength;
+        result.baseColor = material.baseOrDiffuseColor.rgb * textures.baseOrDiffuse.rgb;
+        result.roughness = material.roughness * textures.metalRoughOrSpecular.g;
+        result.metalness = material.metalness * textures.metalRoughOrSpecular.b;
+        result.hasMetalRoughParams = true;
+
+        // Compute the BRDF inputs for the metal-rough model
+        // https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#metal-brdf-and-dielectric-brdf
+        result.diffuseAlbedo = lerp(result.baseColor * (1.0 - c_DielectricSpecular), 0.0, result.metalness);
+        result.specularF0 = lerp(c_DielectricSpecular, result.baseColor.rgb, result.metalness);
     }
-
-    result.normal = result.geometryNormal;
-    result.diffuseColor = g_Material.diffuseColor.rgb;
-    result.specularColor = g_Material.specularColor;
-    result.emissiveColor = g_Material.emissiveColor;
-    result.opacity = g_Material.opacity;
-    result.roughness = g_Material.roughness;
-
-    if (g_Material.useDiffuseTexture)
+    
+    result.occlusion = 1.0;
+    if (material.flags & MaterialFlags_UseOcclusionTexture)
     {
-        float4 diffuseTextureValue = t_Diffuse.Sample(s_MaterialSampler, vtx.m_uv);
-        result.diffuseColor *= diffuseTextureValue.rgb;
-        result.opacity *= diffuseTextureValue.a;
+        result.occlusion = textures.occlusion.r;
     }
 
-    if (g_Material.specularTextureType != SpecularType_None)
-    {
-        float4 specularTextureValue = t_Specular.Sample(s_MaterialSampler, vtx.m_uv);
-        DecodeSpecularTexture(result, specularTextureValue);
-    }
-    else
-    {
-        result.diffuseColor *= (1 - result.specularColor);
-    }
+    result.occlusion = lerp(1.0, result.occlusion, material.occlusionStrength);
+    
+    result.opacity = material.opacity;
+    if (material.flags & MaterialFlags_UseBaseOrDiffuseTexture)
+        result.opacity *= textures.baseOrDiffuse.a;
+    result.opacity = saturate(result.opacity);
 
-    if (g_Material.useEmissiveTexture)
-    {
-        float4 emissiveTextureValue = t_Emissive.Sample(s_MaterialSampler, vtx.m_uv);
-        result.emissiveColor *= emissiveTextureValue.rgb;
-    }
+    result.transmission = material.transmissionFactor;
+    if (material.flags & MaterialFlags_UseTransmissionTexture)
+        result.transmission *= textures.transmission.r;
+    
+    result.emissiveColor = material.emissiveColor;
+    if (material.flags & MaterialFlags_UseEmissiveTexture)
+        result.emissiveColor *= textures.emissive.rgb;
 
-    if (g_Material.useNormalsTexture)
-    {
-        float4 normalsTextureValue = t_Normals.Sample(s_MaterialSampler, vtx.m_uv);
-        DecodeNormalsTexture(result, vtx, normalsTextureValue);
-    }
-
-    return result;
-}
-
-
-SurfaceParams EvaluateSceneMaterialCompute(SceneVertex vtx, float sampleLevel)
-{
-    SurfaceParams result = DefaultSurfaceParams();
-    result.worldPos = vtx.m_pos;
-
-    float normalLength = length(vtx.m_normal);
-    if (normalLength == 0)
-    {
-        result.geometryNormal = 0;
-    }
-    else
-    {
-        result.geometryNormal = vtx.m_normal / normalLength;
-    }
-
-    result.normal = result.geometryNormal;
-    result.diffuseColor = g_Material.diffuseColor.rgb;
-    result.specularColor = g_Material.specularColor;
-    result.emissiveColor = g_Material.emissiveColor;
-    result.opacity = g_Material.opacity;
-    result.roughness = g_Material.roughness;
-
-    if (g_Material.useDiffuseTexture)
-    {
-        float4 diffuseTextureValue = t_Diffuse.SampleLevel(s_MaterialSampler, vtx.m_uv, sampleLevel);
-        result.diffuseColor *= diffuseTextureValue.rgb;
-        result.opacity *= diffuseTextureValue.a;
-    }
-
-    if (g_Material.specularTextureType != SpecularType_None)
-    {
-        float4 specularTextureValue = t_Specular.SampleLevel(s_MaterialSampler, vtx.m_uv, sampleLevel);
-        DecodeSpecularTexture(result, specularTextureValue);
-    }
-    else
-    {
-        result.diffuseColor *= (1 - result.specularColor);
-    }
-
-    if (g_Material.useEmissiveTexture)
-    {
-        float4 emissiveTextureValue = t_Emissive.SampleLevel(s_MaterialSampler, vtx.m_uv, sampleLevel);
-        result.emissiveColor *= emissiveTextureValue.rgb;
-    }
-
-    if (g_Material.useNormalsTexture)
-    {
-        float4 normalsTextureValue = t_Normals.SampleLevel(s_MaterialSampler, vtx.m_uv, sampleLevel);
-        DecodeNormalsTexture(result, vtx, normalsTextureValue);
-    }
-
+    if (material.flags & MaterialFlags_UseNormalTexture)
+        ApplyNormalMap(result, tangent, textures.normal, material.normalTextureScale);
 
     return result;
 }

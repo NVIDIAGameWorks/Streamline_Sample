@@ -1,9 +1,31 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma pack_matrix(row_major)
 
 #include <donut/shaders/tonemapping_cb.h>
 
 Buffer<uint> t_Histogram : register(t0);
-RWTexture2D<float> u_Exposure : register(u0);
+RWBuffer<uint> u_Exposure : register(u0);
 
 cbuffer c_ToneMapping : register(b0)
 {
@@ -13,95 +35,60 @@ cbuffer c_ToneMapping : register(b0)
 #define FIXED_POINT_FRAC_BITS 6
 #define FIXED_POINT_FRAC_MULTIPLIER (1 << FIXED_POINT_FRAC_BITS)
 
-// Most of the code below has been shamelessly stolen from UE4 eye adaptation shaders, i.e. PostProcessEyeAdaptation.usf
-
-float GetHistogramBucket(uint BucketIndex)
-{
-    return float(t_Histogram[BucketIndex]) / FIXED_POINT_FRAC_MULTIPLIER;
-}
-
-float ComputeHistogramSum()
-{
-    float Sum = 0;
-
-    [loop]
-    for (uint i = 0; i < HISTOGRAM_BINS; ++i)
-    {
-        Sum += GetHistogramBucket(i);
-    }
-
-    return Sum;
-}
-
-float ComputeLuminanceFromHistogramPosition(float HistogramPosition)
-{
-    return exp2(HistogramPosition * g_ToneMapping.logLuminanceScale + g_ToneMapping.logLuminanceBias);
-}
-
-float ComputeAverageLuminaneWithoutOutlier(float MinFractionSum, float MaxFractionSum)
-{
-    float2 SumWithoutOutliers = 0;
-
-    [loop]
-    for (uint i = 0; i < HISTOGRAM_BINS; ++i)
-    {
-        float LocalValue = GetHistogramBucket(i);
-
-        // remove outlier at lower end
-        float Sub = min(LocalValue, MinFractionSum);
-        LocalValue = LocalValue - Sub;
-        MinFractionSum -= Sub;
-        MaxFractionSum -= Sub;
-
-        // remove outlier at upper end
-        LocalValue = min(LocalValue, MaxFractionSum);
-        MaxFractionSum -= LocalValue;
-
-        float LuminanceAtBucket = ComputeLuminanceFromHistogramPosition(i / (float)HISTOGRAM_BINS);
-
-        SumWithoutOutliers += float2(LuminanceAtBucket, 1) * LocalValue;
-    }
-
-    return SumWithoutOutliers.x / max(0.0001f, SumWithoutOutliers.y);
-}
-
-float ComputeEyeAdaptationExposure()
-{
-    float HistogramSum = ComputeHistogramSum();
-
-    float UnclampedAdaptedLuminance = ComputeAverageLuminaneWithoutOutlier(
-        HistogramSum * g_ToneMapping.histogramLowPercentile, 
-        HistogramSum * g_ToneMapping.histogramHighPercentile);
-
-    float ClampedAdaptedLuminance = clamp(
-        UnclampedAdaptedLuminance, 
-        g_ToneMapping.minAdaptedLuminance, 
-        g_ToneMapping.maxAdaptedLuminance);
-    
-    return ClampedAdaptedLuminance;
-}
-
-float ComputeEyeAdaptation(float OldExposure, float TargetExposure, float FrameTime)
-{
-    float Diff = OldExposure - TargetExposure;
-
-    float AdaptationSpeed = (Diff < 0) ? g_ToneMapping.eyeAdaptationSpeedUp : g_ToneMapping.eyeAdaptationSpeedDown;
-
-    if (AdaptationSpeed <= 0)
-        return TargetExposure;
-
-    float Factor = exp2(-FrameTime * AdaptationSpeed);
-
-    return TargetExposure + Diff * Factor;
-}
-
 [numthreads(1, 1, 1)]
 void main()
 {
-    float TargetExposure = ComputeEyeAdaptationExposure();
-    float OldExposure = u_Exposure[uint2(0, 0)];
+    float cdf = 0;
+    uint i;
 
-    float SmoothedExposure = ComputeEyeAdaptation(OldExposure, TargetExposure, g_ToneMapping.frameTime);
+    [loop]
+    for (i = 0; i < HISTOGRAM_BINS; ++i)
+    {
+        cdf += float(t_Histogram[i]) / FIXED_POINT_FRAC_MULTIPLIER;
+    }
 
-    u_Exposure[uint2(0, 0)] = SmoothedExposure;
+    float lowCdf = cdf * g_ToneMapping.histogramLowPercentile;
+    float highCdf = cdf * g_ToneMapping.histogramHighPercentile;
+
+    float weightSum = 0;
+    float binSum = 0;
+    cdf = 0;
+
+    [loop]
+    for (i = 0; i < HISTOGRAM_BINS; ++i)
+    {
+        float binValue = float(t_Histogram[i]) / FIXED_POINT_FRAC_MULTIPLIER;
+
+        if (lowCdf <= cdf + binValue && cdf <= highCdf)
+        {
+            float histogramBinLuminance = exp2((i / (float)HISTOGRAM_BINS) * g_ToneMapping.logLuminanceScale
+                + g_ToneMapping.logLuminanceBias);
+
+            weightSum += histogramBinLuminance * binValue;
+            binSum += binValue;
+        }
+
+        cdf += binValue;
+    }
+
+    float targetExposure = (binSum > 0) ? (weightSum / binSum) : 0;
+    
+    targetExposure = clamp(
+        targetExposure,
+        g_ToneMapping.minAdaptedLuminance, 
+        g_ToneMapping.maxAdaptedLuminance);
+    
+    float oldExposure = asfloat(u_Exposure[0]);
+    float diff = oldExposure - targetExposure;
+
+    float adaptationSpeed = (diff < 0)
+        ? g_ToneMapping.eyeAdaptationSpeedUp
+        : g_ToneMapping.eyeAdaptationSpeedDown;
+
+    if (adaptationSpeed > 0)
+    {
+        targetExposure += diff * exp2(-g_ToneMapping.frameTime * adaptationSpeed);
+    }
+
+    u_Exposure[0] = asuint(targetExposure);
 }

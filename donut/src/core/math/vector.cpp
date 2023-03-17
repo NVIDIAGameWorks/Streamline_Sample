@@ -1,9 +1,31 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #include <donut/core/math/math.h>
 
 namespace donut::math
 {
 
-    float3 sphericalToCartesian(radians_f azimuth, radians_f elevation, float distance)
+    float3 sphericalToCartesian(float azimuth, float elevation, float distance)
     {
         // azimuth=0, elevation=0 points to (1, 0, 0)
         // positive elevation goes to positive Y
@@ -16,12 +38,12 @@ namespace donut::math
         return float3(x, y, z) * distance;
     }
 
-    float3 sphericalDegreesToCartesian(degrees_f azimuth, degrees_f elevation, float distance)
+    float3 sphericalDegreesToCartesian(float azimuth, float elevation, float distance)
     {
         return sphericalToCartesian(radians(azimuth), radians(elevation), distance);
     }
 
-    void cartesianToSpherical(const float3& v, radians_f& azimuth, radians_f& elevation, float& distance)
+    void cartesianToSpherical(const float3& v, float& azimuth, float& elevation, float& distance)
     {
         distance = length(v);
 
@@ -42,9 +64,9 @@ namespace donut::math
             azimuth = atan2f(vn.z, vn.x);
     }
 
-    void cartesianToSphericalDegrees(const float3& v, degrees_f& azimuth, degrees_f& elevation, float& distance)
+    void cartesianToSphericalDegrees(const float3& v, float& azimuth, float& elevation, float& distance)
     {
-        radians_f r_azimuth, r_elevation;
+        float r_azimuth, r_elevation;
         cartesianToSpherical(v, r_azimuth, r_elevation, distance);
         azimuth = degrees(r_azimuth);
         elevation = degrees(r_elevation);
@@ -54,8 +76,8 @@ namespace donut::math
     uint vectorToSnorm8(const float2& v)
     {
         float scale = 127.0f / sqrtf(v.x * v.x + v.y * v.y);
-        uint32_t x = uint32_t(v.x * scale);
-        uint32_t y = uint32_t(v.y * scale);
+        int x = int(v.x * scale);
+        int y = int(v.y * scale);
         return (x & 0xff) | ((y & 0xff) << 8);
     }
 
@@ -63,20 +85,20 @@ namespace donut::math
     uint vectorToSnorm8(const float3& v)
     {
         float scale = 127.0f / sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-        uint32_t x = uint32_t(v.x * scale);
-        uint32_t y = uint32_t(v.y * scale);
-        uint32_t z = uint32_t(v.z * scale);
+        int x = int(v.x * scale);
+        int y = int(v.y * scale);
+        int z = int(v.z * scale);
         return (x & 0xff) | ((y & 0xff) << 8) | ((z & 0xff) << 16);
     }
 
     template<>
     uint vectorToSnorm8(const float4& v)
     {
-        float scale = 127.0f / sqrtf(v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w);
-        uint32_t x = uint32_t(v.x * scale);
-        uint32_t y = uint32_t(v.y * scale);
-        uint32_t z = uint32_t(v.z * scale);
-        uint32_t w = uint32_t(v.w * scale);
+        float scale = 127.0f / sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+        int x = int(v.x * scale);
+        int y = int(v.y * scale);
+        int z = int(v.z * scale);
+        int w = int(v.w * scale);
         return (x & 0xff) | ((y & 0xff) << 8) | ((z & 0xff) << 16) | ((w & 0xff) << 24);
     }
 

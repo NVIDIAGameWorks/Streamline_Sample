@@ -1,3 +1,25 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 // This file is loosely based on DDSTextureLoader.cpp from Microsoft DirectXTK library.
 
 //--------------------------------------------------------------------------------------
@@ -611,6 +633,40 @@ namespace donut::engine
                 return false;
             }
 
+            // Apply the forceSRGB flag and promote various compatible formats to sRGB
+            if (textureInfo.forceSRGB)
+            {
+                switch (textureInfo.format)  // NOLINT(clang-diagnostic-switch-enum)
+                {
+                case(nvrhi::Format::RGBA8_UNORM):
+                    textureInfo.format = nvrhi::Format::SRGBA8_UNORM;
+                    break;
+
+                case(nvrhi::Format::BGRA8_UNORM):
+                    textureInfo.format = nvrhi::Format::SBGRA8_UNORM;
+                    break;
+
+                case(nvrhi::Format::BC1_UNORM):
+                    textureInfo.format = nvrhi::Format::BC1_UNORM_SRGB;
+                    break;
+
+                case(nvrhi::Format::BC2_UNORM):
+                    textureInfo.format = nvrhi::Format::BC2_UNORM_SRGB;
+                    break;
+
+                case(nvrhi::Format::BC3_UNORM):
+                    textureInfo.format = nvrhi::Format::BC3_UNORM_SRGB;
+                    break;
+
+                case(nvrhi::Format::BC7_UNORM):
+                    textureInfo.format = nvrhi::Format::BC7_UNORM_SRGB;
+                    break;
+
+                default:
+                    break;
+                }
+            }
+
             switch (d3d10ext->resourceDimension)
             {
             case DDS_DIMENSION_TEXTURE1D:
@@ -710,7 +766,7 @@ namespace donut::engine
         if (!texture)
             return nullptr;
 
-        commandList->beginTrackingTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::COMMON);
+        commandList->beginTrackingTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
 
         for (uint32_t arraySlice = 0; arraySlice < info.arraySize; arraySlice++)
         {
@@ -722,7 +778,8 @@ namespace donut::engine
             }
         }
 
-        commandList->endTrackingTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::SHADER_RESOURCE, true);
+        commandList->setPermanentTextureState(texture, nvrhi::ResourceStates::ShaderResource);
+        commandList->commitBarriers();
 
         return texture;
     }
@@ -743,7 +800,7 @@ namespace donut::engine
     {
         DDS_HEADER header = {};
         DDS_HEADER_DXT10 dx10header = {};
-        const nvrhi::TextureDesc& textureDesc = stagingTexture->GetDesc();
+        const nvrhi::TextureDesc& textureDesc = stagingTexture->getDesc();
 
         header.size = sizeof(DDS_HEADER);
         header.flags = DDS_HEADER_FLAGS_TEXTURE;

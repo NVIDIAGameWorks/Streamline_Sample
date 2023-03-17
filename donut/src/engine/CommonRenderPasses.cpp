@@ -1,53 +1,73 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #include <donut/engine/CommonRenderPasses.h>
 #include <donut/engine/ShaderFactory.h>
+#include <donut/engine/BindingCache.h>
 
 using namespace donut::math;
 #include <donut/shaders/blit_cb.h>
 
 using namespace donut::engine;
 
-CommonRenderPasses::CommonRenderPasses(nvrhi::DeviceHandle device, std::shared_ptr<ShaderFactory> shaderFactory)
+CommonRenderPasses::CommonRenderPasses(nvrhi::IDevice* device, std::shared_ptr<ShaderFactory> shaderFactory)
     : m_Device(device)
 {
     {
         std::vector<ShaderMacro> VsMacros;
         VsMacros.push_back(ShaderMacro("QUAD_Z", "0"));
-        m_FullscreenVS = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "fullscreen_vs", "main", &VsMacros, nvrhi::ShaderType::SHADER_VERTEX);
+        m_FullscreenVS = shaderFactory->CreateShader("donut/fullscreen_vs", "main", &VsMacros, nvrhi::ShaderType::Vertex);
 
         VsMacros[0].definition = "1";
-        m_FullscreenAtOneVS = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "fullscreen_vs", "main", &VsMacros, nvrhi::ShaderType::SHADER_VERTEX);
+        m_FullscreenAtOneVS = shaderFactory->CreateShader("donut/fullscreen_vs", "main", &VsMacros, nvrhi::ShaderType::Vertex);
     }
 
-    m_RectVS = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "rect_vs", "main", nullptr, nvrhi::ShaderType::SHADER_VERTEX);
-    m_BlitPS = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "blit_ps", "main", nullptr, nvrhi::ShaderType::SHADER_PIXEL);
-    m_SharpenPS = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "sharpen_ps", "main", nullptr, nvrhi::ShaderType::SHADER_PIXEL);
-    
-    nvrhi::BufferDesc constantBufferDesc;
-    constantBufferDesc.byteSize = sizeof(BlitConstants);
-    constantBufferDesc.debugName = "BlitConstants";
-    constantBufferDesc.isConstantBuffer = true;
-    constantBufferDesc.isVolatile = true;
-    m_BlitCB = m_Device->createBuffer(constantBufferDesc);
+    m_RectVS = shaderFactory->CreateShader("donut/rect_vs", "main", nullptr, nvrhi::ShaderType::Vertex);
 
-    nvrhi::SamplerDesc samplerDesc;
-    samplerDesc.wrapMode[0] = samplerDesc.wrapMode[1] = samplerDesc.wrapMode[2] = nvrhi::SamplerDesc::WRAP_MODE_CLAMP;
-    samplerDesc.minFilter = samplerDesc.magFilter = samplerDesc.mipFilter = false;
+    std::vector<ShaderMacro> blitMacros = { ShaderMacro("TEXTURE_ARRAY", "0") };
+    m_BlitPS = shaderFactory->CreateShader("donut/blit_ps", "main", &blitMacros, nvrhi::ShaderType::Pixel);
+    m_SharpenPS = shaderFactory->CreateShader("donut/sharpen_ps", "main", &blitMacros, nvrhi::ShaderType::Pixel);
+    blitMacros[0].definition = "1"; // TEXTURE_ARRAY
+    m_BlitArrayPS = shaderFactory->CreateShader("donut/blit_ps", "main", &blitMacros, nvrhi::ShaderType::Pixel);
+    m_SharpenArrayPS = shaderFactory->CreateShader("donut/sharpen_ps", "main", &blitMacros, nvrhi::ShaderType::Pixel);
+    
+    auto samplerDesc = nvrhi::SamplerDesc()
+        .setAllFilters(false)
+        .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
     m_PointClampSampler = m_Device->createSampler(samplerDesc);
 
-    samplerDesc.minFilter = samplerDesc.magFilter = samplerDesc.mipFilter = true;
+    samplerDesc.setAllFilters(true);
     m_LinearClampSampler = m_Device->createSampler(samplerDesc);
     
-    samplerDesc.wrapMode[0] = samplerDesc.wrapMode[1] = samplerDesc.wrapMode[2] = nvrhi::SamplerDesc::WRAP_MODE_WRAP;
+    samplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Wrap);
     m_LinearWrapSampler = m_Device->createSampler(samplerDesc);
 
-    samplerDesc.anisotropy = 16;
+    samplerDesc.setMaxAnisotropy(16);
     m_AnisotropicWrapSampler = m_Device->createSampler(samplerDesc);
 
     {
         unsigned int blackImage = 0xff000000;
         unsigned int grayImage = 0xff808080;
         unsigned int whiteImage = 0xffffffff;
-        unsigned int zeroImage = 0x00000000;
 
         nvrhi::TextureDesc textureDesc;
         textureDesc.format = nvrhi::Format::RGBA8_UNORM;
@@ -73,23 +93,20 @@ CommonRenderPasses::CommonRenderPasses(nvrhi::DeviceHandle device, std::shared_p
         textureDesc.debugName = "BlackTexture2DArray";
         textureDesc.arraySize = 6;
         m_BlackTexture2DArray = m_Device->createTexture(textureDesc);
-
-        textureDesc.format = nvrhi::Format::R32_FLOAT;
-        textureDesc.debugName = "ZeroDepthStencil2DArray";
-        textureDesc.arraySize = 6;
-        m_ZeroDepthStencil2DArray = m_Device->createTexture(textureDesc);
+        textureDesc.debugName = "WhiteTexture2DArray";
+        m_WhiteTexture2DArray = m_Device->createTexture(textureDesc);
 
         // Write the textures using a temporary CL
 
         nvrhi::CommandListHandle commandList = m_Device->createCommandList();
         commandList->open();
 
-        commandList->beginTrackingTextureState(m_BlackTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::COMMON);
-        commandList->beginTrackingTextureState(m_GrayTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::COMMON);
-        commandList->beginTrackingTextureState(m_WhiteTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::COMMON);
-        commandList->beginTrackingTextureState(m_BlackCubeMapArray, nvrhi::AllSubresources, nvrhi::ResourceStates::COMMON);
-        commandList->beginTrackingTextureState(m_BlackTexture2DArray, nvrhi::AllSubresources, nvrhi::ResourceStates::COMMON);
-        commandList->beginTrackingTextureState(m_ZeroDepthStencil2DArray, nvrhi::AllSubresources, nvrhi::ResourceStates::COMMON);
+        commandList->beginTrackingTextureState(m_BlackTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+        commandList->beginTrackingTextureState(m_GrayTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+        commandList->beginTrackingTextureState(m_WhiteTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+        commandList->beginTrackingTextureState(m_BlackCubeMapArray, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+        commandList->beginTrackingTextureState(m_BlackTexture2DArray, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
+        commandList->beginTrackingTextureState(m_WhiteTexture2DArray, nvrhi::AllSubresources, nvrhi::ResourceStates::Common);
 
         commandList->writeTexture(m_BlackTexture, 0, 0, &blackImage, 0);
         commandList->writeTexture(m_GrayTexture, 0, 0, &grayImage, 0);
@@ -98,19 +115,17 @@ CommonRenderPasses::CommonRenderPasses(nvrhi::DeviceHandle device, std::shared_p
         for (uint32_t arraySlice = 0; arraySlice < 6; arraySlice += 1)
         {
             commandList->writeTexture(m_BlackTexture2DArray, arraySlice, 0, &blackImage, 0);
+            commandList->writeTexture(m_WhiteTexture2DArray, arraySlice, 0, &whiteImage, 0);
             commandList->writeTexture(m_BlackCubeMapArray, arraySlice, 0, &blackImage, 0);
-
-            commandList->writeTexture(m_ZeroDepthStencil2DArray, arraySlice, 0, &zeroImage, 0);
         }
-
-        // Permanently transition them to a SHADER_RESOURCE state
-
-        commandList->endTrackingTextureState(m_BlackTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::SHADER_RESOURCE, true);
-        commandList->endTrackingTextureState(m_GrayTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::SHADER_RESOURCE, true);
-        commandList->endTrackingTextureState(m_WhiteTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::SHADER_RESOURCE, true);
-        commandList->endTrackingTextureState(m_BlackCubeMapArray, nvrhi::AllSubresources, nvrhi::ResourceStates::SHADER_RESOURCE, true);
-        commandList->endTrackingTextureState(m_BlackTexture2DArray, nvrhi::AllSubresources, nvrhi::ResourceStates::SHADER_RESOURCE, true);
-        commandList->endTrackingTextureState(m_ZeroDepthStencil2DArray, nvrhi::AllSubresources, nvrhi::ResourceStates::SHADER_RESOURCE, true);
+        
+        commandList->setPermanentTextureState(m_BlackTexture, nvrhi::ResourceStates::ShaderResource);
+        commandList->setPermanentTextureState(m_GrayTexture, nvrhi::ResourceStates::ShaderResource);
+        commandList->setPermanentTextureState(m_WhiteTexture, nvrhi::ResourceStates::ShaderResource);
+        commandList->setPermanentTextureState(m_BlackCubeMapArray, nvrhi::ResourceStates::ShaderResource);
+        commandList->setPermanentTextureState(m_BlackTexture2DArray, nvrhi::ResourceStates::ShaderResource);
+        commandList->setPermanentTextureState(m_WhiteTexture2DArray, nvrhi::ResourceStates::ShaderResource);
+        commandList->commitBarriers();
 
         commandList->close();
         m_Device->executeCommandList(commandList);
@@ -118,74 +133,122 @@ CommonRenderPasses::CommonRenderPasses(nvrhi::DeviceHandle device, std::shared_p
 
     {
         nvrhi::BindingLayoutDesc layoutDesc;
-
-        layoutDesc.VS = {
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer }
-        };
-
-        layoutDesc.PS = {
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer },
-            { 0, nvrhi::ResourceType::Texture_SRV },
-            { 0, nvrhi::ResourceType::Sampler }
+        layoutDesc.visibility = nvrhi::ShaderType::All;
+        layoutDesc.bindings = {
+            nvrhi::BindingLayoutItem::PushConstants(0, sizeof(BlitConstants)),
+            nvrhi::BindingLayoutItem::Texture_SRV(0),
+            nvrhi::BindingLayoutItem::Sampler(0)
         };
 
         m_BlitBindingLayout = m_Device->createBindingLayout(layoutDesc);
     }
 }
 
-nvrhi::BindingSetHandle CommonRenderPasses::CreateBlitBindingSet(nvrhi::ITexture* source, uint32_t sourceArraySlice, uint32_t sourceMip)
+static bool IsSupportedBlitDimension(nvrhi::TextureDimension dimension)
 {
-    nvrhi::BindingSetDesc bindingDesc;
-
-    bindingDesc.VS = {
-        nvrhi::BindingSetItem::ConstantBuffer(0, m_BlitCB)
-    };
-
-    bindingDesc.PS = {
-        nvrhi::BindingSetItem::ConstantBuffer(0, m_BlitCB),
-        nvrhi::BindingSetItem::Texture_SRV(0, source, nvrhi::Format::UNKNOWN, nvrhi::TextureSubresourceSet(sourceMip, 1, sourceArraySlice, 1)),
-        nvrhi::BindingSetItem::Sampler(0, m_LinearClampSampler)
-    };
-
-    return m_Device->createBindingSet(bindingDesc, m_BlitBindingLayout);
+    return dimension == nvrhi::TextureDimension::Texture2D
+        || dimension == nvrhi::TextureDimension::Texture2DArray
+        || dimension == nvrhi::TextureDimension::TextureCube
+        || dimension == nvrhi::TextureDimension::TextureCubeArray;
 }
 
-void CommonRenderPasses::BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, dm::box2_arg targetBox, nvrhi::IBindingSet* source, dm::box2_arg sourceBox)
+static bool IsTextureArray(nvrhi::TextureDimension dimension)
 {
-    const nvrhi::FramebufferAttachment& attachment = target->GetDesc().colorAttachments[0];
-    const nvrhi::TextureDesc& targetDesc = attachment.texture->GetDesc();
+    return dimension == nvrhi::TextureDimension::Texture2DArray
+        || dimension == nvrhi::TextureDimension::TextureCube
+        || dimension == nvrhi::TextureDimension::TextureCubeArray;
+}
 
-    nvrhi::GraphicsPipelineHandle& pso = m_BlitPsoCache[target->GetFramebufferInfo()];
+void CommonRenderPasses::BlitTexture(nvrhi::ICommandList* commandList, const BlitParameters& params, BindingCache* bindingCache)
+{
+    assert(commandList);
+    assert(params.targetFramebuffer);
+    assert(params.sourceTexture);
+
+    const nvrhi::FramebufferDesc& targetFramebufferDesc = params.targetFramebuffer->getDesc();
+    assert(targetFramebufferDesc.colorAttachments.size() == 1);
+    assert(targetFramebufferDesc.colorAttachments[0].valid());
+    assert(!targetFramebufferDesc.depthAttachment.valid());
+
+    const nvrhi::FramebufferInfo& fbinfo = params.targetFramebuffer->getFramebufferInfo();
+    const nvrhi::TextureDesc& sourceDesc = params.sourceTexture->getDesc();
+
+    assert(IsSupportedBlitDimension(sourceDesc.dimension));
+    bool isTextureArray = IsTextureArray(sourceDesc.dimension);
+
+    nvrhi::Viewport targetViewport = params.targetViewport;
+    if (targetViewport.width() == 0 && targetViewport.height() == 0)
+    {
+        // If no viewport is specified, create one based on the framebuffer dimensions.
+        // Note that the FB dimensions may not be the same as target texture dimensions, in case a non-zero mip level is used.
+        targetViewport = nvrhi::Viewport(float(fbinfo.width), float(fbinfo.height));
+    }
+
+    nvrhi::IShader* shader = nullptr;
+    switch(params.sampler)
+    {
+    case BlitSampler::Point:
+    case BlitSampler::Linear: shader = isTextureArray ? m_BlitArrayPS : m_BlitPS; break;
+    case BlitSampler::Sharpen: shader = isTextureArray ? m_SharpenArrayPS : m_SharpenPS; break;
+    default: assert(false);
+    }
+    
+    nvrhi::GraphicsPipelineHandle& pso = m_BlitPsoCache[PsoCacheKey{ fbinfo, shader, params.blendState }];
     if (!pso)
     {
         nvrhi::GraphicsPipelineDesc psoDesc;
         psoDesc.bindingLayouts = { m_BlitBindingLayout };
         psoDesc.VS = m_RectVS;
-        psoDesc.PS = m_BlitPS;
-        psoDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
-        psoDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        psoDesc.renderState.depthStencilState.depthEnable = false;
+        psoDesc.PS = shader;
+        psoDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
+        psoDesc.renderState.rasterState.setCullNone();
+        psoDesc.renderState.depthStencilState.depthTestEnable = false;
         psoDesc.renderState.depthStencilState.stencilEnable = false;
-        
-        pso = m_Device->createGraphicsPipeline(psoDesc, target);
+        psoDesc.renderState.blendState.targets[0] = params.blendState;
+
+        pso = m_Device->createGraphicsPipeline(psoDesc, params.targetFramebuffer);
     }
+    
+    nvrhi::BindingSetDesc bindingSetDesc;
+    {
+        auto sourceDimension = sourceDesc.dimension;
+        if (sourceDimension == nvrhi::TextureDimension::TextureCube || sourceDimension == nvrhi::TextureDimension::TextureCubeArray)
+            sourceDimension = nvrhi::TextureDimension::Texture2DArray;
+
+        auto sourceSubresources = nvrhi::TextureSubresourceSet(params.sourceMip, 1, params.sourceArraySlice, 1);
+
+        bindingSetDesc.bindings = {
+            nvrhi::BindingSetItem::PushConstants(0, sizeof(BlitConstants)),
+            nvrhi::BindingSetItem::Texture_SRV(0, params.sourceTexture).setSubresources(sourceSubresources).setDimension(sourceDimension),
+            nvrhi::BindingSetItem::Sampler(0, params.sampler == BlitSampler::Point ? m_PointClampSampler : m_LinearClampSampler)
+        };
+    }
+
+    // If a binding cache is provided, get the binding set from the cache.
+    // Otherwise, create one and then release it.
+    nvrhi::BindingSetHandle sourceBindingSet;
+    if (bindingCache)
+        sourceBindingSet = bindingCache->GetOrCreateBindingSet(bindingSetDesc, m_BlitBindingLayout);
+    else
+        sourceBindingSet = m_Device->createBindingSet(bindingSetDesc, m_BlitBindingLayout);
 
     nvrhi::GraphicsState state;
     state.pipeline = pso;
-    state.framebuffer = target;
-    state.bindings = { source };
-    state.viewport.addViewport(viewport);
-    state.viewport.addScissorRect(nvrhi::Rect(viewport));
+    state.framebuffer = params.targetFramebuffer;
+    state.bindings = { sourceBindingSet };
+    state.viewport.addViewport(targetViewport);
+    state.viewport.addScissorRect(nvrhi::Rect(targetViewport));
+    state.blendConstantColor = params.blendConstantColor;
 
     BlitConstants blitConstants = {};
-    blitConstants.sourceOrigin = float2(sourceBox.m_mins);
-    blitConstants.sourceSize = sourceBox.diagonal();
-    blitConstants.targetOrigin = float2(targetBox.m_mins);
-    blitConstants.targetSize = targetBox.diagonal();
-
-    commandList->writeBuffer(m_BlitCB, &blitConstants, sizeof(blitConstants));
+    blitConstants.sourceOrigin = float2(params.sourceBox.m_mins);
+    blitConstants.sourceSize = params.sourceBox.diagonal();
+    blitConstants.targetOrigin = float2(params.targetBox.m_mins);
+    blitConstants.targetSize = params.targetBox.diagonal();
 
     commandList->setGraphicsState(state);
+
+    commandList->setPushConstants(&blitConstants, sizeof(blitConstants));
 
     nvrhi::DrawArguments args;
     args.instanceCount = 1;
@@ -193,98 +256,14 @@ void CommonRenderPasses::BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IF
     commandList->draw(args);
 }
 
-void CommonRenderPasses::BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, nvrhi::IBindingSet* source)
+void CommonRenderPasses::BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* targetFramebuffer, nvrhi::ITexture* sourceTexture, BindingCache* bindingCache)
 {
-    BlitTexture(commandList, target, viewport, box2(0.f, 1.f), source, box2(0.f, 1.f));
-}
+    assert(commandList);
+    assert(targetFramebuffer);
+    assert(sourceTexture);
 
-void CommonRenderPasses::BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, nvrhi::ITexture* source, uint32_t sourceArraySlice /*= 0*/, uint32_t sourceMip /*= 0*/)
-{
-    BlitTexture(commandList, target, viewport, GetCachedBindingSet(source, sourceArraySlice, sourceMip));
-}
-
-void CommonRenderPasses::BlitTexture(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, dm::box2_arg targetBox, nvrhi::ITexture* source, dm::box2_arg sourceBox, uint32_t sourceArraySlice /*= 0*/, uint32_t sourceMip /*= 0*/)
-{
-    BlitTexture(commandList, target, viewport, targetBox, GetCachedBindingSet(source, sourceArraySlice, sourceMip), sourceBox);
-}
-
-void CommonRenderPasses::BlitSharpen(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, float sharpenFactor, dm::box2_arg targetBox, nvrhi::IBindingSet* source, dm::box2_arg sourceBox)
-{
-    const nvrhi::FramebufferAttachment& attachment = target->GetDesc().colorAttachments[0];
-    const nvrhi::TextureDesc& targetDesc = attachment.texture->GetDesc();
-
-    nvrhi::GraphicsPipelineHandle& pso = m_SharpenPsoCache[target->GetFramebufferInfo()];
-    if (!pso)
-    {
-        nvrhi::GraphicsPipelineDesc psoDesc;
-        psoDesc.bindingLayouts = { m_BlitBindingLayout };
-        psoDesc.VS = m_RectVS;
-        psoDesc.PS = m_SharpenPS;
-        psoDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
-        psoDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        psoDesc.renderState.depthStencilState.depthEnable = false;
-        psoDesc.renderState.depthStencilState.stencilEnable = false;
-
-        pso = m_Device->createGraphicsPipeline(psoDesc, target);
-    }
-
-    nvrhi::GraphicsState state;
-    state.pipeline = pso;
-    state.framebuffer = target;
-    state.bindings = { source };
-    state.viewport.addViewport(viewport);
-    state.viewport.addScissorRect(nvrhi::Rect(viewport));
-
-    BlitConstants blitConstants = {};
-    blitConstants.sourceOrigin = float2(sourceBox.m_mins);
-    blitConstants.sourceSize = sourceBox.diagonal();
-    blitConstants.targetOrigin = float2(targetBox.m_mins);
-    blitConstants.targetSize = targetBox.diagonal();
-    blitConstants.sharpenFactor = sharpenFactor;
-
-    commandList->writeBuffer(m_BlitCB, &blitConstants, sizeof(blitConstants));
-
-    commandList->setGraphicsState(state);
-
-    nvrhi::DrawArguments args;
-    args.instanceCount = 1;
-    args.vertexCount = 4;
-    commandList->draw(args);
-}
-
-void CommonRenderPasses::BlitSharpen(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, float sharpenFactor, nvrhi::IBindingSet* source)
-{
-    BlitSharpen(commandList, target, viewport, sharpenFactor, box2(0.f, 1.f), source, box2(0.f, 1.f));
-}
-
-void CommonRenderPasses::BlitSharpen(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, float sharpenFactor, nvrhi::ITexture* source, uint32_t sourceArraySlice /*= 0*/, uint32_t sourceMip /*= 0*/)
-{
-    BlitSharpen(commandList, target, viewport, sharpenFactor, GetCachedBindingSet(source, sourceArraySlice, sourceMip));
-}
-
-void CommonRenderPasses::BlitSharpen(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* target, const nvrhi::Viewport& viewport, float sharpenFactor, dm::box2_arg targetBox, nvrhi::ITexture* source, dm::box2_arg sourceBox, uint32_t sourceArraySlice /*= 0*/, uint32_t sourceMip /*= 0*/)
-{
-    BlitSharpen(commandList, target, viewport, sharpenFactor, targetBox, GetCachedBindingSet(source, sourceArraySlice, sourceMip), sourceBox);
-}
-
-void CommonRenderPasses::ResetBindingCache()
-{
-    m_BlitBindingCache.clear();
-}
-
-nvrhi::IBindingSet* CommonRenderPasses::GetCachedBindingSet(nvrhi::ITexture* texture, uint32_t arraySlice, uint32_t mipLevel)
-{
-    BlitBindingKey key;
-    key.texture = texture;
-    key.arraySlice = arraySlice;
-    key.mipLevel = mipLevel;
-
-    nvrhi::BindingSetHandle& bindingSet = m_BlitBindingCache[key];
-
-    if (!bindingSet)
-    {
-        bindingSet = CreateBlitBindingSet(texture, arraySlice, mipLevel);
-    }
-
-    return bindingSet;
+    BlitParameters params;
+    params.targetFramebuffer = targetFramebuffer;
+    params.sourceTexture = sourceTexture;
+    BlitTexture(commandList, params, bindingCache);
 }

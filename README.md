@@ -1,40 +1,37 @@
-# Streamline Sample
+# StreamlineSample
 
-## Prereqs
+This project combines Streamline (https://gitlab-master.nvidia.com/streamline/sdk) and Donut (https://gitlab-master.nvidia.com/nvrhi/donut) to create a sample app demonstrating a Streamline integration.
 
-- Windows 10
-- Visual Studio 2017+
-- Cmake 3.12+
-- Python 3.7 (64-Bit)
 
-## Instructions:
+## To get this project setup:
+1. Ensure you have Cmake 3.20+ and the vulkan sdk (https://vulkan.lunarg.com) on your system.
+2. Ensure that a VK-compatible dxc.exe is available in your system `PATH`.  The best way to do this is to install a recent (1.2.198.1 or newer) Vulkan SDK from https://www.vulkan.org/ and ensure that its `bin` directory is in the build machine's system `PATH`.
+3. Clone this repository, then run in the commandline: `git submodule update --init --recursive`
+4. Copy your streamline SDK contents (`bin`, `lib`, `include` and, optionally, `scripts`) into the `streamline` folder
+5. Use Cmake to make the project solution (or use `make.bat`). Cmake will attempt to locate plugins by searching first the `streamline/bin/x64` and then the `streamline/bin/x64/development` folders for `sl.interposer.dll`. If found, it will load all SL plugin DLLs from the folder where `sl.interposer.dll` was located.
+6. Open the solution and build (or use `build.bat`)
+7. Run the executable (or use `run.bat`)
 
-1. Clone this repo on your local machine: git clone https://github.com/NVIDIAGameWorks/Streamline_Sample
 
-2. Place _sl-sdk_ in $dir/donut/thirdparty/.
-    - SL SDK can be found here: https://github.com/NVIDIAGameWorks/Streamline
-    - This _sl-sdk_ must have the structure <br />
-    &emsp; sl-sdk/ <br />
-    &emsp; &emsp; |-> bin/ <br />
-    &emsp; &emsp;&emsp;        |-> x64/ <br />
-    &emsp; &emsp;&emsp;&emsp;            |-> .dll files go here <br />
-    &emsp; &emsp;    |-> lib/ <br />
-    &emsp; &emsp;&emsp;        |-> x64/ <br />
-    &emsp; &emsp;&emsp;&emsp;            |-> .lib files go here<br />
-    &emsp; &emsp;    |-> include/ <br />
-    &emsp; &emsp;&emsp;        |-> .h files go here
+## Integration notes
+- D3D11 and D3D12 are integrated using the advanced 'hooking' mechanism by which we have two seperate native/proxy devices and swapchains that are passed into specific api calls. We statically link sl.interposer.lib instead of D3D libs.
+- Vulkan is integrated using the basic mechanism, by which streamline hooks all of the api calls. We dynamically link sl.interposer.dll instead of vulkan-1.dll. 
+- Runing make.bat with `-AMD_AGS`, adds support for AMD AGS, and shows how devs might go about integrating SL around this. 
 
-4. Run cmake in $dir. Specify x64 compiler config.
-
-5. Set default project to 'Donut SL Demo/sl_demo' in Visual Studio
-
-## Notes
-
-- To swap between d3d11 and d3d12, go to the properties page of sl_demo, Configuration Properties -> Debugging -> Command Arguments. Then put "-d3d11" or "-d3d12" as needed. By default we use d3d12.
-- Currently vulkan is not supported by this sample.
-- If a certain DLSS mode is not available, the sample will revert to TAA.
-- When DLSS is selected for antialiasing, the rendering resolution can be set via the UI to:
-  - "fixed" (to the DLSS mode's recommended value)
-  - "dynamic" (changing once per second to a different resolution of the same aspect ratio that is within the min/max supported range of the selected DLSS quality mode).
-- In DLSS dynamic resolution mode, it is possible to enable a debug rendering mode that shows the size of the source rendering relative to the size of the rendering buffer.  Note that this mode is for debug visualization only; the DLSS quality may be adversely affected.
-
+## Useful commandLine arguments: 
+Arguments                                                                                 | Effect
+---                                                                                       | ---
+-width 1920                                                                               | Sets width
+-height 1080                                                                              | Sets height
+-fullscreen                                                                               | Sets fullscreen (by default game runs in windowed)
+-verbose                                                                                  | Allows vebose info level logging logging
+-logToFile                                                                                | Logs to file
+-debug                                                                                    | Enables NVRHI and Graphics API validation Layer
+-noSigCheck                                                                               | Does not do streamline dll signiture check 
+-vsync                                                                                    | Enables Vsync
+-sllog                                                                                    | Enables streamline logging
+-scene "/myscene.fbx"                                                                     | Loads a custom scene
+-maxFrames 100                                                                            | Sets number of frames to render before the app shuts down
+-Reflex_mode 1                                                                            | Sets Reflex mode: 1:On 2:Boost
+-Reflex_fpsCap 60                                                                         | Sets Refex FPS cap to a given number
+-DLSS_mode 1                                                                              | Sets the DLSS mode startup: 0:Off 1:MaxPerf 2:Balanced 3:MaxQual 4:UtraPerf 5:UltraQual

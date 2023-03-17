@@ -1,3 +1,25 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #include <donut/core/math/math.h>
 #include <assert.h>
 
@@ -5,16 +27,16 @@ namespace donut::math
 {
 	// Color space conversions
 
-	hsv RGBtoHSV(rgb_arg c)
+	float3 RGBtoHSV(const float3& c)
 	{
 		float minComp = minComponent(c);
 		float maxComp = maxComponent(c);
 		float delta = maxComp - minComp;
 
 		if (maxComp == 0.0f)
-			return makehsv(0.0f);
+			return float3(0.0f);
 
-		hsv result = { 0, delta / maxComp, maxComp };
+		float3 result = { 0, delta / maxComp, maxComp };
 
 		if (delta == 0.0f)
 			return result;
@@ -33,10 +55,10 @@ namespace donut::math
 		return result;
 	}
 
-	rgb HSVtoRGB(hsv_arg c)
+	float3 HSVtoRGB(const float3& c)
 	{
 		if (c.y == 0.0f)
-			return makergb(c.z);
+			return float3(c.z);
 
 		float h = modPositive(c.x, 360.0f) / 60.0f;
 		int i = int(floor(h));
@@ -48,14 +70,14 @@ namespace donut::math
 
 		switch (i)
 		{
-		case 0: return makergb(c.z, t, p);
-		case 1: return makergb(q, c.z, p);
-		case 2: return makergb(p, c.z, t);
-		case 3: return makergb(p, q, c.z);
-		case 4: return makergb(t, p, c.z);
-		case 5: return makergb(c.z, p, q);
+		case 0: return float3(c.z, t, p);
+		case 1: return float3(q, c.z, p);
+		case 2: return float3(p, c.z, t);
+		case 3: return float3(p, q, c.z);
+		case 4: return float3(t, p, c.z);
+		case 5: return float3(c.z, p, q);
 		default:
-			return makergb(0.0f);
+			return float3(0.0f);
 		}
 	}
 
@@ -63,7 +85,7 @@ namespace donut::math
 	// chosen to make RGB (1, 1, 1) come out to CIELAB (100, 0, 0).
 	static const float3 xyzWhitePoint = { 0.9505f, 1.0f, 1.0887f };
 
-	cielab RGBtoCIELAB(rgb_arg c)
+	float3 RGBtoCIELAB(const float3& c)
 	{
 		// Convert RGB to XYZ color space
 		static const float3x3 RGBtoXYZ =
@@ -80,13 +102,13 @@ namespace donut::math
 						xyz > 0.00885645f,
 						pow(xyz, 1.0f/3.0f),
 						7.787037f * xyz + 0.137931f);
-		return makecielab(
+		return float3(
 					116.0f * warp.y - 16.0f,
 					500.0f * (warp.x - warp.y),
 					200.0f * (warp.y - warp.z));
 	}
 
-	rgb CIELABtoRGB(cielab_arg c)
+	float3 CIELABtoRGB(const float3& c)
 	{
 		// Convert CIELAB to XYZ
 		float warpY = (c.x + 16.0f) / 116.0f;

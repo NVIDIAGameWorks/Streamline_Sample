@@ -35,7 +35,7 @@
  *
  *               LZ4_decompress_safe
  *                 This is the recommended function for decompressing data.  It is considered safe because the caller specifies
- *                 both the size of the compresssed buffer to read as well as the maximum size of the output (decompressed) buffer
+ *                 both the size of the compressed buffer to read as well as the maximum size of the output (decompressed) buffer
  *                 instead of just the latter.
  *               LZ4_decompress_fast
  *                 Again, despite its name it's not a "fast" version of decompression.  It simply frees the caller of sending the
@@ -60,6 +60,7 @@
 #define _POSIX_C_SOURCE 199309L
 
 /* Includes, for Power! */
+#define LZ4_DISABLE_DEPRECATE_WARNINGS   /* LZ4_decompress_fast */
 #include "lz4.h"
 #include <stdio.h>    /* for printf() */
 #include <stdlib.h>   /* for exit() */

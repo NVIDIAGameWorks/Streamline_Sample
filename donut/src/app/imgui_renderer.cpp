@@ -1,3 +1,49 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
+/*
+License for Dear ImGui
+
+Copyright (c) 2014-2019 Omar Cornut
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 #include <donut/app/imgui_renderer.h>
 #include <donut/core/vfs/VFS.h>
 
@@ -46,35 +92,21 @@ bool ImGui_Renderer::Init(std::shared_ptr<ShaderFactory> shaderFactory)
     return imgui_nvrhi->init(GetDevice(), shaderFactory);
 }
 
-bool ImGui_Renderer::LoadFont(IFileSystem& fs, const std::filesystem::path& fontFile, float fontSize)
+ImFont* ImGui_Renderer::LoadFont(IFileSystem& fs, const std::filesystem::path& fontFile, float fontSize)
 {
-    auto fileContents = fs.readFile(fontFile);
+	auto fontData = fs.readFile(fontFile);
+	if (!fontData)
+		return nullptr;
 
-    if (!fileContents)
-        return false;
-
-    // hold on to the data because imgui will use it later
-    m_fontData.push_back(fileContents);
-
-    // also tell imgui that we own the data and it shouldn't free the data
     ImFontConfig fontConfig;
-    fontConfig.FontDataOwnedByAtlas = false;
 
-    ImFont* font = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
-        const_cast<void*>(fileContents->data()), 
-        static_cast<int>(fileContents->size()), 
-        fontSize, &fontConfig);
+	// XXXX mk: this appears to be a bug: the atlas copies (& owns) the data when the
+	// flag is set to false !
+	fontConfig.FontDataOwnedByAtlas = false;
+	ImFont* imFont = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
+		(void*)(fontData->data()), (int)(fontData->size()), fontSize, &fontConfig);
 
-    fonts.push_back(font);
-    return (font != nullptr);
-}
-
-ImFont* ImGui_Renderer::GetFont(uint32_t fontID)
-{
-    if (fontID >= fonts.size())
-        return nullptr;
-
-    return fonts[fontID];
+	return imFont;
 }
 
 bool ImGui_Renderer::KeyboardUpdate(int key, int scancode, int action, int mods)
@@ -239,7 +271,7 @@ void ImGui_Renderer::BeginFullScreenWindow()
     ImGui::SetNextWindowSize(ImVec2(float(width), float(height)), ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
     ImGui::SetNextWindowBgAlpha(0.f);
-    ImGui::Begin("", 0, ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar);
+    ImGui::Begin(" ", 0, ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar);
 }
 
 void ImGui_Renderer::DrawScreenCenteredText(const char* text)

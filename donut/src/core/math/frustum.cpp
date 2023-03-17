@@ -1,3 +1,25 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #include <donut/core/math/math.h>
 
 namespace donut::math
@@ -60,13 +82,17 @@ namespace donut::math
     {
         for (int i = 0; i < PLANES_COUNT; ++i)
         {
-            float3 minPt;
-            minPt.x = planes[i].normal.x > 0 ? box.m_mins.x : box.m_maxs.x;
-            minPt.y = planes[i].normal.y > 0 ? box.m_mins.y : box.m_maxs.y;
-            minPt.z = planes[i].normal.z > 0 ? box.m_mins.z : box.m_maxs.z;
+            float x = planes[i].normal.x > 0 ? box.m_mins.x : box.m_maxs.x;
+            float y = planes[i].normal.y > 0 ? box.m_mins.y : box.m_maxs.y;
+            float z = planes[i].normal.z > 0 ? box.m_mins.z : box.m_maxs.z;
+            
+            float distance = 
+                planes[i].normal.x * x +
+                planes[i].normal.y * y +
+                planes[i].normal.z * z -
+                planes[i].distance;
 
-            float distance = dot(planes[i].normal, minPt);
-            if (distance > planes[i].distance) return false;
+            if (distance > 0.f) return false;
         }
 
         return true;

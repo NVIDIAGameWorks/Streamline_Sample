@@ -1,4 +1,28 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma pack_matrix(row_major)
+
+#include <donut/shaders/brdf.hlsli>
 
 // GS to replicate a quad into 6 cube faces
 
@@ -40,8 +64,6 @@ void cubemap_gs(
 
 // Helpers
 
-static const float PI = 3.1415926535;
-
 float radicalInverse(uint i)
 {
     i = (i & 0x55555555) << 1 | (i & 0xAAAAAAAA) >> 1;
@@ -52,7 +74,7 @@ float radicalInverse(uint i)
     return float(i) * 2.3283064365386963e-10f;
 }
 
-float2 getHammersley(uint i, uint N)
+float2 Hammersley(uint i, uint N)
 {
     return float2(float(i) / float(N), radicalInverse(i));
 }
@@ -61,6 +83,7 @@ float3 uvToDirection(float2 uv, uint face)
 {
     float3 direction = float3(uv.x * 2 - 1, 1 - uv.y * 2, 1);
 
+    // Inverse cube face view matrices
     switch (face)
     {
     case 0: direction.xyz = float3(direction.z, direction.y, -direction.x); break;
@@ -74,105 +97,9 @@ float3 uvToDirection(float2 uv, uint face)
     return normalize(direction);
 }
 
-// Basis utils
-
-struct Basis
-{
-    float3 up;
-    float3 right;
-    float3 forward;
-};
-
-Basis GenerateBasis(float3 N)
-{
-    Basis result;
-    result.forward = N;
-    result.up = float3(0, 1, 0);
-
-    if (abs(N.y) > abs(N.x) && abs(N.y) > abs(N.z))
-    {
-        float3 adjacentUp = (N.y < 0) ? float3(N.x, N.y, 0) : float3(-N.x, -N.y, 0);
-        float blendFactor = saturate(length(N.xz) * 1.5);
-        result.up = lerp(result.up, adjacentUp, blendFactor);
-    }
-
-    result.right = normalize(cross(result.forward, result.up));
-    result.up = normalize(cross(result.right, result.forward));
-
-    return result;
-}
-
-
-void RandomizeBasis(float2 pos, inout Basis basis)
-{
-    float angle = frac(sin(dot(pos.xy, float2(12.9898, 78.233))) * 43758.5453) * 3.1415;
-    float s = sin(angle);
-    float c = cos(angle);
-
-    float3 up = basis.up * c + basis.right * s;
-    float3 right = basis.right * c - basis.up * s;
-
-    basis.up = up;
-    basis.right = right;
-}
-
-
-// Importance sampling
-
-float3 importanceSampleCosDir(float2 u, Basis basis)
-{
-    float u1 = u.x;
-    float u2 = u.y;
-
-    float r = sqrt(u1);
-    float phi = u2 * PI * 2;
-
-    float3 L = float3(r * cos(phi),
-        r * sin(phi),
-        sqrt(max(0.0f, 1.0f - u1)));
-
-    return normalize(basis.up * L.y + basis.right * L.x + basis.forward * L.z);
-}
-
-float3 importanceSampleGGX(float2 u, float roughness, Basis basis)
-{
-    float a = roughness * roughness;
-
-    float phi = PI * 2 * u.x;
-    float cosTheta = sqrt((1 - u.y) / (1 + (a * a - 1) * u.y));
-    float sinTheta = sqrt(1 - cosTheta * cosTheta);
-
-    // Tangent space H
-    float3 tH;
-    tH.x = sinTheta * cos(phi);
-    tH.y = sinTheta * sin(phi);
-    tH.z = cosTheta;
-
-    // World space H
-    return normalize(basis.right * tH.x + basis.up * tH.y + basis.forward * tH.z);
-}
-
-float evalGGX(float roughness, float NdotH)
-{
-    float a2 = roughness * roughness;
-    float d = ((NdotH * a2 - NdotH) * NdotH + 1);
-    return a2 / (d * d);
-}
-
-float smithGGX(float NdotL, float NdotV, float roughness)
-{
-    float k = ((roughness + 1) * (roughness + 1)) / 8;
-    float g1 = NdotL / (NdotL * (1 - k) + k);
-    float g2 = NdotV / (NdotV * (1 - k) + k);
-    return g1 * g2;
-}
-
-float3 fresnelSchlick(float3 f0, float3 f90, float u)
-{
-    return f0 + (f90 - f0) * pow(1 - u, 5);
-}
-
 // Integration
+
+// The implementation is based on the "Real Shading in Unreal Engine 4" paper by Brian Karis.
 
 #include <donut/shaders/light_probe_cb.h>
 
@@ -199,65 +126,62 @@ void diffuse_probe_ps(
     out float4 o_color : SV_Target0)
 {
     float3 N = uvToDirection(Input.uv, Input.arrayIndex);
-    Basis basis = GenerateBasis(N);
-    RandomizeBasis(Input.position.xy, basis);
+    float3 T, B;
+    ConstructONB(N, T, B);
 
-    float4 accumulation = 0;
-    float totalWeight = 0;
+    float4 totalRadiance = 0;
     
     for (uint i = 0; i < g_LightProbe.sampleCount; i++)
     {
-        float2 u = getHammersley(i, g_LightProbe.sampleCount);
-        float3 L = importanceSampleCosDir(u, basis);
-        float NdotL = dot(N, L);
-        if (NdotL > 0)
-        {
-            accumulation += t_EnvironmentMap.SampleLevel(s_EnvironmentMapSampler, L, g_LightProbe.lodBias) * NdotL / (2 * PI);
-            totalWeight += NdotL;
-        }
+        float2 random = Hammersley(i, g_LightProbe.sampleCount);
+        float solidAnglePdf;
+        float3 Le = SampleCosHemisphere(random, solidAnglePdf);
+        float3 L = Le.x * T + Le.y * B + Le.z * N;
+
+        float4 radiance = t_EnvironmentMap.SampleLevel(s_EnvironmentMapSampler, L, g_LightProbe.lodBias);
+
+        totalRadiance += radiance;
     }
 
-    o_color = accumulation / totalWeight;
+    totalRadiance /= M_PI * float(g_LightProbe.sampleCount);
+
+    o_color = totalRadiance;
 }
 
 void specular_probe_ps(
     in GSOutput Input,
     out float4 o_color : SV_Target0)
 {
-    float3 N = uvToDirection(Input.uv, Input.arrayIndex);
-    Basis basis = GenerateBasis(N);
-    RandomizeBasis(Input.position.xy, basis);
+    float3 R = uvToDirection(Input.uv, Input.arrayIndex);
+    float3 N = R;
+    float3 V = R;
 
-    float4 accBrdf = 0;
-    float accBrdfWeight = 0;
+    float3 T, B;
+    ConstructONB(N, T, B);
+
+
+    float4 totalRadiance = 0;
+    float totalWeight = 0;
 
     for (uint i = 0; i < g_LightProbe.sampleCount; i++)
     {
-        float2 u = getHammersley(i, g_LightProbe.sampleCount);
-        float3 H = importanceSampleGGX(u, g_LightProbe.roughness, basis);
+        float2 random = Hammersley(i, g_LightProbe.sampleCount);
+        float3 He = ImportanceSampleGGX(random, g_LightProbe.roughness);
+        float3 H = He.x * T + He.y * B + He.z * N;
+
         float3 L = reflect(-N, H);
-        float NdotL = dot(N, L);
+        float NdotL = saturate(dot(N, L));
 
         if (NdotL > 0)
         {
-            float NdotH = saturate(dot(N, H));
-            float LdotH = saturate(dot(L, H));
+            float4 radiance = t_EnvironmentMap.SampleLevel(s_EnvironmentMapSampler, L, g_LightProbe.lodBias);
 
-            // D term GGX
-            float pdf = (evalGGX(g_LightProbe.roughness, NdotH) / PI) * NdotH / (4 * LdotH);
-
-            float omegaS = 1 / (g_LightProbe.sampleCount * pdf);
-            float omegaP = 4.0 * PI / (6 * g_LightProbe.inputCubeSize * g_LightProbe.inputCubeSize);
-            float mipLevel = 0.5 * log2(omegaS / omegaP);
-
-            float4 Li = t_EnvironmentMap.SampleLevel(s_EnvironmentMapSampler, L, mipLevel + g_LightProbe.lodBias);
-
-            accBrdf += Li * NdotL;
-            accBrdfWeight += NdotL;
+            totalRadiance += radiance * NdotL;
+            totalWeight += NdotL;
         }
     }
 
-    o_color = accBrdf / accBrdfWeight;
+    o_color = totalRadiance / totalWeight;
 }
 
 void environment_brdf_ps(
@@ -265,41 +189,39 @@ void environment_brdf_ps(
     in float2 uv : UV,
     out float4 o_color : SV_Target0)
 {
-    const float3 N = float3(0, 0, 1);
-    Basis basis = GenerateBasis(N);
-
-    // texC.x is NdotV, calculate a valid V assuming constant N
-    float cos_theta = uv.x;
-    float sin_thets = sqrt(1 - cos_theta * cos_theta);
-    const float3 V = float3(sin_thets, 0, cos_theta);
-
+    float NoV = uv.x;
     float roughness = uv.y;
+    
+    float3 V;
+    V.x = sqrt( 1.0f - NoV * NoV ); // sin
+    V.y = 0;
+    V.z = NoV; // cos
 
-    float NdotV = dot(N, V);
-    float2 accumulation = 0;
+    float A = 0;
+    float B = 0;
 
-    const uint sampleCount = 1024;
-
-    for (uint i = 0; i < sampleCount; i++)
+    const uint NumSamples = 1024;
+    for (uint i = 0; i < NumSamples; i++)
     {
-        float2 u = getHammersley(i, sampleCount);
+        float2 random = Hammersley(i, NumSamples);
+        float3 H = ImportanceSampleGGX(random, roughness);
+        float3 L = 2 * dot( V, H ) * H - V;
 
-        // Specular GGX integration (stored in RG)
-        float3 H = importanceSampleGGX(u, roughness, basis);
-        float3 L = reflect(-N, H);
-        float NdotH = saturate(dot(N, H));
-        float LdotH = saturate(dot(L, H));
-        float NdotL = saturate(dot(N, L));
+        float NoL = saturate( L.z );
+        float NoH = saturate( H.z );
+        float VoH = saturate( dot( V, H ) );
 
-        float G = smithGGX(NdotL, NdotV, roughness);
-        if (NdotL > 0 && G > 0)
+        if( NoL > 0 )
         {
-            float GVis = (G * LdotH) / (NdotV * NdotH);
-            float Fc = fresnelSchlick(0, 1, LdotH).r;
-            accumulation.r += (1 - Fc) * GVis;
-            accumulation.g += Fc * GVis;
+            float G_over_NdotV = G_Smith_over_NdotV(roughness, NoV, NoL);
+
+            float G_Vis = G_over_NdotV * VoH / NoH;
+            float Fc = pow( 1 - VoH, 5 );
+            A += (1 - Fc) * G_Vis;
+            B += Fc * G_Vis;
         }
     }
 
-    o_color = float4(accumulation.xy / float(sampleCount), 0, 0);
+    o_color.rg = float2( A, B ) / NumSamples;
+    o_color.ba = 0;
 }

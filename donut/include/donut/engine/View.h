@@ -1,3 +1,25 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 
 #include <donut/core/math/math.h>
@@ -24,8 +46,10 @@ namespace donut::engine
     class ICompositeView
     {
     public:
-        virtual uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const = 0;
-        virtual const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const = 0;
+        [[nodiscard]] virtual uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const = 0;
+        [[nodiscard]] virtual const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const = 0;
+
+        virtual ~ICompositeView() = default;
     };
 
     class IView : public ICompositeView
@@ -33,89 +57,106 @@ namespace donut::engine
     public:
         virtual void FillPlanarViewConstants(PlanarViewConstants& constants) const;
 
-        virtual nvrhi::ViewportState GetViewportState() const = 0;
-        virtual nvrhi::TextureSubresourceSet GetSubresources() const = 0;
-        virtual bool IsReverseDepth() const = 0;
-        virtual bool IsOrthographicProjection() const = 0;
-        virtual bool IsStereoView() const = 0;
-        virtual bool IsCubemapView() const = 0;
-        virtual bool IsMeshVisible(const dm::box3& bbox) const = 0;
-        virtual dm::float3 GetViewOrigin() const = 0;
-        virtual dm::float3 GetViewDirection() const = 0;
-        virtual dm::frustum GetViewFrustum() const = 0;
-        virtual dm::frustum GetProjectionFrustum() const = 0;
-        virtual dm::affine3 GetViewMatrix() const = 0;
-        virtual dm::affine3 GetInverseViewMatrix() const = 0;
-        virtual dm::float4x4 GetProjectionMatrix(bool includeOffset = true) const = 0;
-        virtual dm::float4x4 GetInverseProjectionMatrix(bool includeOffset = true) const = 0;
-        virtual dm::float4x4 GetViewProjectionMatrix(bool includeOffset = true) const = 0;
-        virtual dm::float4x4 GetInverseViewProjectionMatrix(bool includeOffset = true) const = 0;
-        virtual nvrhi::Rect GetViewExtent() const = 0;
-        virtual dm::float2 GetPixelOffset() const = 0;
+        [[nodiscard]] virtual nvrhi::ViewportState GetViewportState() const = 0;
+        [[nodiscard]] virtual nvrhi::VariableRateShadingState GetVariableRateShadingState() const = 0;
+        [[nodiscard]] virtual nvrhi::TextureSubresourceSet GetSubresources() const = 0;
+        [[nodiscard]] virtual bool IsReverseDepth() const = 0;
+        [[nodiscard]] virtual bool IsOrthographicProjection() const = 0;
+        [[nodiscard]] virtual bool IsStereoView() const = 0;
+        [[nodiscard]] virtual bool IsCubemapView() const = 0;
+        [[nodiscard]] virtual bool IsBoxVisible(const dm::box3& bbox) const = 0;
+        [[nodiscard]] virtual bool IsMirrored() const = 0;
+        [[nodiscard]] virtual dm::float3 GetViewOrigin() const = 0;
+        [[nodiscard]] virtual dm::float3 GetViewDirection() const = 0;
+        [[nodiscard]] virtual dm::frustum GetViewFrustum() const = 0;
+        [[nodiscard]] virtual dm::frustum GetProjectionFrustum() const = 0;
+        [[nodiscard]] virtual dm::affine3 GetViewMatrix() const = 0;
+        [[nodiscard]] virtual dm::affine3 GetInverseViewMatrix() const = 0;
+        [[nodiscard]] virtual dm::float4x4 GetProjectionMatrix(bool includeOffset = true) const = 0;
+        [[nodiscard]] virtual dm::float4x4 GetInverseProjectionMatrix(bool includeOffset = true) const = 0;
+        [[nodiscard]] virtual dm::float4x4 GetViewProjectionMatrix(bool includeOffset = true) const = 0;
+        [[nodiscard]] virtual dm::float4x4 GetInverseViewProjectionMatrix(bool includeOffset = true) const = 0;
+        [[nodiscard]] virtual nvrhi::Rect GetViewExtent() const = 0;
+        [[nodiscard]] virtual dm::float2 GetPixelOffset() const = 0;
 
-        virtual uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const override;
-        virtual const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const override;
+        [[nodiscard]] uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const override;
+        [[nodiscard]] const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const override;
     };
 
 
     class PlanarView : public IView
     {
-    public:
+    protected:
+        // Directly settable parameters
         nvrhi::Viewport m_Viewport;
         nvrhi::Rect m_ScissorRect;
-        dm::affine3 m_ViewMatrix;
-        dm::float4x4 m_ProjMatrix;
-        dm::float4x4 m_PixelOffsetMatrix;
-        dm::float4x4 m_PixelOffsetMatrixInv;
-        dm::float4x4 m_ViewProjMatrix;
-        dm::float4x4 m_ViewProjOffsetMatrix;
-        dm::affine3 m_ViewMatrixInv;
-        dm::float4x4 m_ProjMatrixInv;
-        dm::float4x4 m_ViewProjMatrixInv;
-        dm::float4x4 m_ViewProjOffsetMatrixInv;
-        dm::frustum m_ViewFrustum;
-        dm::frustum m_ProjectionFrustum;
-        dm::float2 m_PixelOffset;
-        int m_ArraySlice;
-        bool m_ReverseDepth;
-    public:
-        PlanarView();
-        void SetViewport(const nvrhi::Viewport& viewport);
-        void SetMatrices(const dm::affine3& viewMatrix, const dm::float4x4& projMatrix);
-        void SetPixelOffset(const dm::float2 jitter);
-        void SetArraySlice(int arraySlice);
+        nvrhi::VariableRateShadingState m_ShadingRateState;
+        dm::affine3 m_ViewMatrix = dm::affine3::identity();
+        dm::float4x4 m_ProjMatrix = dm::float4x4::identity();
+        dm::float2 m_PixelOffset = dm::float2::zero();
+        int m_ArraySlice = 0;
 
-        virtual nvrhi::ViewportState GetViewportState() const override;
-        virtual nvrhi::TextureSubresourceSet GetSubresources() const override;
-        virtual bool IsReverseDepth() const override;
-        virtual bool IsOrthographicProjection() const override;
-        virtual bool IsStereoView() const override;
-        virtual bool IsCubemapView() const override;
-        virtual bool IsMeshVisible(const dm::box3& bbox) const override;
-        virtual dm::float3 GetViewOrigin() const override;
-        virtual dm::float3 GetViewDirection() const override;
-        virtual dm::frustum GetViewFrustum() const override;
-        virtual dm::frustum GetProjectionFrustum() const override;
-        virtual dm::affine3 GetViewMatrix() const override;
-        virtual dm::affine3 GetInverseViewMatrix() const override;
-        virtual dm::float4x4 GetProjectionMatrix(bool includeOffset = true) const override;
-        virtual dm::float4x4 GetInverseProjectionMatrix(bool includeOffset = true) const override;
-        virtual dm::float4x4 GetViewProjectionMatrix(bool includeOffset = true) const override;
-        virtual dm::float4x4 GetInverseViewProjectionMatrix(bool includeOffset = true) const override;
-        virtual nvrhi::Rect GetViewExtent() const override;
-        virtual dm::float2 GetPixelOffset() const override;
+        // Derived matrices and other information - computed and cached on access
+        dm::float4x4 m_PixelOffsetMatrix = dm::float4x4::identity();
+        dm::float4x4 m_PixelOffsetMatrixInv = dm::float4x4::identity();
+        dm::float4x4 m_ViewProjMatrix = dm::float4x4::identity();
+        dm::float4x4 m_ViewProjOffsetMatrix = dm::float4x4::identity();
+        dm::affine3 m_ViewMatrixInv = dm::affine3::identity();
+        dm::float4x4 m_ProjMatrixInv = dm::float4x4::identity();
+        dm::float4x4 m_ViewProjMatrixInv = dm::float4x4::identity();
+        dm::float4x4 m_ViewProjOffsetMatrixInv = dm::float4x4::identity();
+        dm::frustum m_ViewFrustum = dm::frustum::empty();
+        dm::frustum m_ProjectionFrustum = dm::frustum::empty();
+        bool m_ReverseDepth = false;
+        bool m_IsMirrored = false;
+        bool m_CacheValid = false;
+
+        void EnsureCacheIsValid() const;
+        
+    public:
+        void SetViewport(const nvrhi::Viewport& viewport);
+        void SetVariableRateShadingState(const nvrhi::VariableRateShadingState& shadingRateState);
+        void SetMatrices(const dm::affine3& viewMatrix, const dm::float4x4& projMatrix);
+        void SetPixelOffset(dm::float2 offset);
+        void SetArraySlice(int arraySlice);
+        void UpdateCache();
+
+        [[nodiscard]] const nvrhi::Viewport& GetViewport() const { return m_Viewport; }
+        [[nodiscard]] const nvrhi::Rect& GetScissorRect() const { return m_ScissorRect; }
+
+        [[nodiscard]] nvrhi::ViewportState GetViewportState() const override;
+        [[nodiscard]] nvrhi::VariableRateShadingState GetVariableRateShadingState() const override;
+        [[nodiscard]] nvrhi::TextureSubresourceSet GetSubresources() const override;
+        [[nodiscard]] bool IsReverseDepth() const override;
+        [[nodiscard]] bool IsOrthographicProjection() const override;
+        [[nodiscard]] bool IsStereoView() const override;
+        [[nodiscard]] bool IsCubemapView() const override;
+        [[nodiscard]] bool IsBoxVisible(const dm::box3& bbox) const override;
+        [[nodiscard]] bool IsMirrored() const override;
+        [[nodiscard]] dm::float3 GetViewOrigin() const override;
+        [[nodiscard]] dm::float3 GetViewDirection() const override;
+        [[nodiscard]] dm::frustum GetViewFrustum() const override;
+        [[nodiscard]] dm::frustum GetProjectionFrustum() const override;
+        [[nodiscard]] dm::affine3 GetViewMatrix() const override;
+        [[nodiscard]] dm::affine3 GetInverseViewMatrix() const override;
+        [[nodiscard]] dm::float4x4 GetProjectionMatrix(bool includeOffset = true) const override;
+        [[nodiscard]] dm::float4x4 GetInverseProjectionMatrix(bool includeOffset = true) const override;
+        [[nodiscard]] dm::float4x4 GetViewProjectionMatrix(bool includeOffset = true) const override;
+        [[nodiscard]] dm::float4x4 GetInverseViewProjectionMatrix(bool includeOffset = true) const override;
+        [[nodiscard]] nvrhi::Rect GetViewExtent() const override;
+        [[nodiscard]] dm::float2 GetPixelOffset() const override;
     };
 
     class CompositeView : public ICompositeView
     {
-    public:
+    protected:
         std::vector<std::shared_ptr<IView>> m_ChildViews;
-    public:
 
+    public:
         void AddView(std::shared_ptr<IView> view);
 
-        virtual uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const override;
-        virtual const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const override;
+        [[nodiscard]] uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const override;
+        [[nodiscard]] const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const override;
     };
 
     template<typename ChildType>
@@ -128,7 +169,7 @@ namespace donut::engine
         ChildType LeftView;
         ChildType RightView;
 
-        virtual nvrhi::ViewportState GetViewportState() const override
+        [[nodiscard]] nvrhi::ViewportState GetViewportState() const override
         {
             nvrhi::ViewportState left = LeftView.GetViewportState();
             nvrhi::ViewportState right = RightView.GetViewportState();
@@ -141,47 +182,57 @@ namespace donut::engine
             return left;
         }
 
-        virtual nvrhi::TextureSubresourceSet GetSubresources() const override
+        [[nodiscard]] nvrhi::VariableRateShadingState GetVariableRateShadingState() const override
+        {
+            return LeftView.GetVariableRateShadingState();
+        }
+
+        [[nodiscard]] nvrhi::TextureSubresourceSet GetSubresources() const override
         {
             return LeftView.GetSubresources(); // TODO: not really...
         }
 
-        virtual bool IsReverseDepth() const override
+        [[nodiscard]] bool IsReverseDepth() const override
         {
             return LeftView.IsReverseDepth();
         }
 
-        virtual bool IsOrthographicProjection() const override
+        [[nodiscard]] bool IsOrthographicProjection() const override
         {
             return LeftView.IsOrthographicProjection();
         }
 
-        virtual bool IsStereoView() const override
+        [[nodiscard]] bool IsStereoView() const override
         {
             return true;
         }
 
-        virtual bool IsCubemapView() const override
+        [[nodiscard]] bool IsCubemapView() const override
         {
             return false;
         }
 
-        virtual bool IsMeshVisible(const dm::box3& bbox) const override
+        [[nodiscard]] bool IsBoxVisible(const dm::box3& bbox) const override
         {
-            return LeftView.IsMeshVisible(bbox) || RightView.IsMeshVisible(bbox);
+            return LeftView.IsBoxVisible(bbox) || RightView.IsBoxVisible(bbox);
         }
 
-        virtual dm::float3 GetViewOrigin() const override
+        [[nodiscard]] bool IsMirrored() const override
+        {
+            return LeftView.IsMirrored();
+        }
+
+        [[nodiscard]] dm::float3 GetViewOrigin() const override
         {
             return (LeftView.GetViewOrigin() + RightView.GetViewOrigin()) * 0.5f;
         }
 
-        virtual dm::float3 GetViewDirection() const override
+        [[nodiscard]] dm::float3 GetViewDirection() const override
         {
             return LeftView.GetViewDirection();
         }
 
-        virtual dm::frustum GetViewFrustum() const override
+        [[nodiscard]] dm::frustum GetViewFrustum() const override
         {
             dm::frustum left = LeftView.GetViewFrustum();
             dm::frustum right = LeftView.GetViewFrustum();
@@ -192,7 +243,7 @@ namespace donut::engine
             return left;
         }
 
-        virtual dm::frustum GetProjectionFrustum() const override
+        [[nodiscard]] dm::frustum GetProjectionFrustum() const override
         {
             dm::frustum left = LeftView.GetProjectionFrustum();
             dm::frustum right = LeftView.GetProjectionFrustum();
@@ -203,47 +254,47 @@ namespace donut::engine
             return left;
         }
 
-        virtual dm::affine3 GetViewMatrix() const override
+        [[nodiscard]] dm::affine3 GetViewMatrix() const override
         {
             assert(false);
             return dm::affine3::identity();
         }
 
-        virtual dm::affine3 GetInverseViewMatrix() const override
+        [[nodiscard]] dm::affine3 GetInverseViewMatrix() const override
         {
             assert(false);
             return dm::affine3::identity();
         }
 
-        virtual dm::float4x4 GetProjectionMatrix(bool includeOffset = true) const override
+        [[nodiscard]] dm::float4x4 GetProjectionMatrix(bool includeOffset = true) const override
         {
             assert(false);
             (void)includeOffset;
             return dm::float4x4::identity();
         }
 
-        virtual dm::float4x4 GetInverseProjectionMatrix(bool includeOffset = true) const override
+        [[nodiscard]] dm::float4x4 GetInverseProjectionMatrix(bool includeOffset = true) const override
         {
             assert(false);
             (void)includeOffset;
             return dm::float4x4::identity();
         }
 
-        virtual dm::float4x4 GetViewProjectionMatrix(bool includeOffset = true) const override
+        [[nodiscard]] dm::float4x4 GetViewProjectionMatrix(bool includeOffset = true) const override
         {
             assert(false);
             (void)includeOffset;
             return dm::float4x4::identity();
         }
 
-        virtual dm::float4x4 GetInverseViewProjectionMatrix(bool includeOffset = true) const override
+        [[nodiscard]] dm::float4x4 GetInverseViewProjectionMatrix(bool includeOffset = true) const override
         {
             assert(false);
             (void)includeOffset;
             return dm::float4x4::identity();
         }
 
-        virtual nvrhi::Rect GetViewExtent() const override
+        [[nodiscard]] nvrhi::Rect GetViewExtent() const override
         {
             nvrhi::Rect left = LeftView.GetViewExtent();
             nvrhi::Rect right = RightView.GetViewExtent();
@@ -255,7 +306,7 @@ namespace donut::engine
                 std::max(left.maxY, right.maxY));
         }
 
-        virtual uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const override
+        [[nodiscard]] uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const override
         {
             if (supportedTypes & ViewType::STEREO)
                 return 1;
@@ -263,7 +314,7 @@ namespace donut::engine
             return 2;
         }
 
-        virtual const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const override
+        [[nodiscard]] const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const override
         {
             if (supportedTypes & ViewType::STEREO)
             {
@@ -277,7 +328,7 @@ namespace donut::engine
             return &RightView;
         }
 
-        virtual dm::float2 GetPixelOffset() const override
+        [[nodiscard]] dm::float2 GetPixelOffset() const override
         {
             return LeftView.GetPixelOffset();
         }
@@ -287,50 +338,57 @@ namespace donut::engine
 
     class CubemapView : public IView
     {
-    private:
+    protected:
         typedef IView Super;
 
         PlanarView m_FaceViews[6];
-        dm::affine3 m_ViewMatrix;
-        dm::affine3 m_ViewMatrixInv;
-        dm::float4x4 m_ProjMatrix;
-        dm::float4x4 m_ProjMatrixInv;
-        dm::float4x4 m_ViewProjMatrix;
-        dm::float4x4 m_ViewProjMatrixInv;
-        float m_CullDistance;
-        float m_NearPlane;
-        dm::float3 m_Center;
-        dm::box3 m_CullingBox;
-        int m_FirstArraySlice;
+        dm::affine3 m_ViewMatrix = dm::affine3::identity();
+        dm::affine3 m_ViewMatrixInv = dm::affine3::identity();
+        dm::float4x4 m_ProjMatrix = dm::float4x4::identity();
+        dm::float4x4 m_ProjMatrixInv = dm::float4x4::identity();
+        dm::float4x4 m_ViewProjMatrix = dm::float4x4::identity();
+        dm::float4x4 m_ViewProjMatrixInv = dm::float4x4::identity();
+        float m_CullDistance = 1.f;
+        float m_NearPlane = 1.f;
+        dm::float3 m_Center = dm::float3::zero();
+        dm::box3 m_CullingBox = dm::box3::empty();
+        int m_FirstArraySlice = 0;
+        bool m_CacheValid = false;
+
+        void EnsureCacheIsValid() const;
+
     public:
-        CubemapView();
         void SetTransform(dm::affine3 viewMatrix, float zNear, float cullDistance, bool useReverseInfiniteProjections = true);
         void SetArrayViewports(int resolution, int firstArraySlice);
-        float GetNearPlane() const;
-        dm::box3 GetCullingBox() const;
+        void UpdateCache();
 
-        virtual nvrhi::ViewportState GetViewportState() const override;
-        virtual nvrhi::TextureSubresourceSet GetSubresources() const override;
-        virtual bool IsReverseDepth() const override;
-        virtual bool IsOrthographicProjection() const override;
-        virtual bool IsStereoView() const override;
-        virtual bool IsCubemapView() const override;
-        virtual bool IsMeshVisible(const dm::box3& bbox) const override;
-        virtual dm::float3 GetViewOrigin() const override;
-        virtual dm::float3 GetViewDirection() const override;
-        virtual dm::frustum GetViewFrustum() const override;
-        virtual dm::frustum GetProjectionFrustum() const override;
-        virtual dm::affine3 GetViewMatrix() const override;
-        virtual dm::affine3 GetInverseViewMatrix() const override;
-        virtual dm::float4x4 GetProjectionMatrix(bool includeOffset = true) const override;
-        virtual dm::float4x4 GetInverseProjectionMatrix(bool includeOffset = true) const override;
-        virtual dm::float4x4 GetViewProjectionMatrix(bool includeOffset = true) const override;
-        virtual dm::float4x4 GetInverseViewProjectionMatrix(bool includeOffset = true) const override;
-        virtual nvrhi::Rect GetViewExtent() const override;
-        virtual dm::float2 GetPixelOffset() const override;
+        [[nodiscard]] float GetNearPlane() const;
+        [[nodiscard]] dm::box3 GetCullingBox() const;
 
-        virtual uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const override;
-        virtual const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const override;
+        [[nodiscard]] nvrhi::ViewportState GetViewportState() const override;
+        [[nodiscard]] nvrhi::VariableRateShadingState GetVariableRateShadingState() const override;
+        [[nodiscard]] nvrhi::TextureSubresourceSet GetSubresources() const override;
+        [[nodiscard]] bool IsReverseDepth() const override;
+        [[nodiscard]] bool IsOrthographicProjection() const override;
+        [[nodiscard]] bool IsStereoView() const override;
+        [[nodiscard]] bool IsCubemapView() const override;
+        [[nodiscard]] bool IsBoxVisible(const dm::box3& bbox) const override;
+        [[nodiscard]] bool IsMirrored() const override;
+        [[nodiscard]] dm::float3 GetViewOrigin() const override;
+        [[nodiscard]] dm::float3 GetViewDirection() const override;
+        [[nodiscard]] dm::frustum GetViewFrustum() const override;
+        [[nodiscard]] dm::frustum GetProjectionFrustum() const override;
+        [[nodiscard]] dm::affine3 GetViewMatrix() const override;
+        [[nodiscard]] dm::affine3 GetInverseViewMatrix() const override;
+        [[nodiscard]] dm::float4x4 GetProjectionMatrix(bool includeOffset = true) const override;
+        [[nodiscard]] dm::float4x4 GetInverseProjectionMatrix(bool includeOffset = true) const override;
+        [[nodiscard]] dm::float4x4 GetViewProjectionMatrix(bool includeOffset = true) const override;
+        [[nodiscard]] dm::float4x4 GetInverseViewProjectionMatrix(bool includeOffset = true) const override;
+        [[nodiscard]] nvrhi::Rect GetViewExtent() const override;
+        [[nodiscard]] dm::float2 GetPixelOffset() const override;
+
+        [[nodiscard]] uint32_t GetNumChildViews(ViewType::Enum supportedTypes) const override;
+        [[nodiscard]] const IView* GetChildView(ViewType::Enum supportedTypes, uint32_t index) const override;
 
         static uint32_t* GetCubemapCoordinateSwizzle();
     };

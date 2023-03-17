@@ -1,25 +1,51 @@
-FIND_PACKAGE(PythonInterp 2.6)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12.0)
+    # The new Python3 module is much more robust than the previous PythonInterp
+    find_package(Python3 COMPONENTS Interpreter)
+    # Set variables for backwards compatibility with cmake < 3.12.0
+    set(PYTHONINTERP_FOUND ${Python3_Interpreter_FOUND})
+    set(PYTHON_EXECUTABLE ${Python3_EXECUTABLE})
+else()
+    set(Python_ADDITIONAL_VERSIONS 3.8)
+    find_package(PythonInterp 3)
+endif()
 
-ADD_EXECUTABLE(jsontestrunner_exe
-               main.cpp
-               )
+add_executable(jsontestrunner_exe
+    main.cpp
+)
 
-IF(BUILD_SHARED_LIBS)
-    ADD_DEFINITIONS( -DJSON_DLL )
-    TARGET_LINK_LIBRARIES(jsontestrunner_exe jsoncpp_lib)
-ELSE(BUILD_SHARED_LIBS)
-    TARGET_LINK_LIBRARIES(jsontestrunner_exe jsoncpp_lib_static)
-ENDIF()
+if(BUILD_SHARED_LIBS)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12.0)
+        add_compile_definitions( JSON_DLL )
+    else()
+        add_definitions(-DJSON_DLL)
+    endif()
+    target_link_libraries(jsontestrunner_exe jsoncpp_lib)
+else()
+    target_link_libraries(jsontestrunner_exe jsoncpp_static)
+endif()
 
-SET_TARGET_PROPERTIES(jsontestrunner_exe PROPERTIES OUTPUT_NAME jsontestrunner_exe)
+set_target_properties(jsontestrunner_exe PROPERTIES OUTPUT_NAME jsontestrunner_exe)
 
-IF(PYTHONINTERP_FOUND)
+if(PYTHONINTERP_FOUND)
     # Run end to end parser/writer tests
-    SET(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../test)
-    SET(RUNJSONTESTS_PATH ${TEST_DIR}/runjsontests.py)
-    ADD_CUSTOM_TARGET(jsoncpp_readerwriter_tests
-                      "${PYTHON_EXECUTABLE}" -B "${RUNJSONTESTS_PATH}" $<TARGET_FILE:jsontestrunner_exe> "${TEST_DIR}/data"
-                      DEPENDS jsontestrunner_exe jsoncpp_test
-                      )
-    ADD_CUSTOM_TARGET(jsoncpp_check DEPENDS jsoncpp_readerwriter_tests)
-ENDIF()
+    set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../test)
+    set(RUNJSONTESTS_PATH ${TEST_DIR}/runjsontests.py)
+
+    # Run unit tests in post-build
+    # (default cmake workflow hides away the test result into a file, resulting in poor dev workflow?!?)
+    add_custom_target(jsoncpp_readerwriter_tests
+        "${PYTHON_EXECUTABLE}" -B "${RUNJSONTESTS_PATH}" $<TARGET_FILE:jsontestrunner_exe> "${TEST_DIR}/data"
+        DEPENDS jsontestrunner_exe jsoncpp_test
+    )
+    add_custom_target(jsoncpp_check DEPENDS jsoncpp_readerwriter_tests)
+
+    ## Create tests for dashboard submission, allows easy review of CI results https://my.cdash.org/index.php?project=jsoncpp
+    add_test(NAME jsoncpp_readerwriter
+        COMMAND "${PYTHON_EXECUTABLE}" -B "${RUNJSONTESTS_PATH}" $<TARGET_FILE:jsontestrunner_exe> "${TEST_DIR}/data"
+        WORKING_DIRECTORY "${TEST_DIR}/data"
+    )
+    add_test(NAME jsoncpp_readerwriter_json_checker
+        COMMAND "${PYTHON_EXECUTABLE}" -B "${RUNJSONTESTS_PATH}" --with-json-checker  $<TARGET_FILE:jsontestrunner_exe> "${TEST_DIR}/data"
+        WORKING_DIRECTORY "${TEST_DIR}/data"
+    )
+endif()

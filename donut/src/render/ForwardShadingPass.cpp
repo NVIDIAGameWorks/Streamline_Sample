@@ -1,3 +1,24 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/render/ForwardShadingPass.h>
 #include <donut/render/DrawStrategy.h>
@@ -6,18 +27,14 @@
 #include <donut/engine/ShadowMap.h>
 #include <donut/engine/SceneTypes.h>
 #include <donut/engine/CommonRenderPasses.h>
-#include <donut/engine/TextureCache.h>
 #include <donut/engine/MaterialBindingCache.h>
 #include <donut/core/log.h>
 #include <nvrhi/utils.h>
+#include <utility>
 
 using namespace donut::math;
 #include <donut/shaders/forward_cb.h>
 
-#ifdef _WIN32
-#include <d3d11.h> // for nvapi.h to declare the custom semantic stuff
-#include <nvapi.h>
-#endif // _WIN32
 
 using namespace donut::engine;
 using namespace donut::render;
@@ -26,160 +43,100 @@ ForwardShadingPass::ForwardShadingPass(
     nvrhi::IDevice* device,
     std::shared_ptr<CommonRenderPasses> commonPasses)
     : m_Device(device)
-    , m_CommonPasses(commonPasses)
+    , m_CommonPasses(std::move(commonPasses))
 {
 }
 
-void ForwardShadingPass::Init(ShaderFactory& shaderFactory, FramebufferFactory& framebufferFactory, const ICompositeView& compositeView, const CreateParameters& params)
+void ForwardShadingPass::Init(ShaderFactory& shaderFactory, const CreateParameters& params)
 {
     m_SupportedViewTypes = ViewType::PLANAR;
-    if (params.enableSinglePassStereo)
-        m_SupportedViewTypes = ViewType::Enum(m_SupportedViewTypes | ViewType::STEREO);
-    if (params.enableSinglePassCubemap)
-        m_SupportedViewTypes = ViewType::Enum(m_SupportedViewTypes | ViewType::CUBEMAP);
-
-    const IView* sampleView = compositeView.GetChildView(m_SupportedViewTypes, 0);
-    nvrhi::IFramebuffer* sampleFramebuffer = framebufferFactory.GetFramebuffer(*sampleView);
-
-    m_VertexShader = CreateVertexShader(shaderFactory, sampleView, params);
+    if (params.singlePassCubemap)
+        m_SupportedViewTypes = ViewType::CUBEMAP;
+    
+    m_VertexShader = CreateVertexShader(shaderFactory, params);
     m_InputLayout = CreateInputLayout(m_VertexShader, params);
-    m_GeometryShader = CreateGeometryShader(shaderFactory, sampleView, params);
-    m_PixelShader = CreatePixelShader(shaderFactory, sampleView, params);
+    m_GeometryShader = CreateGeometryShader(shaderFactory, params);
+    m_PixelShader = CreatePixelShader(shaderFactory, params, false);
+    m_PixelShaderTransmissive = CreatePixelShader(shaderFactory, params, true);
 
     if (params.materialBindings)
         m_MaterialBindings = params.materialBindings;
     else
         m_MaterialBindings = CreateMaterialBindingCache(*m_CommonPasses);
 
-    nvrhi::SamplerDesc samplerDesc;
-    samplerDesc.wrapMode[0] = samplerDesc.wrapMode[1] = samplerDesc.wrapMode[2] = nvrhi::SamplerDesc::WRAP_MODE_BORDER;
-    samplerDesc.borderColor = nvrhi::Color(1.0f);
+    auto samplerDesc = nvrhi::SamplerDesc()
+        .setAllAddressModes(nvrhi::SamplerAddressMode::Border)
+        .setBorderColor(1.0f);
     m_ShadowSampler = m_Device->createSampler(samplerDesc);
 
-    m_ForwardViewCB = m_Device->createBuffer(nvrhi::utils::CreateConstantBufferDesc(sizeof(ForwardShadingViewConstants), "ForwardShadingViewConstants"));
-    m_ForwardLightCB = m_Device->createBuffer(nvrhi::utils::CreateConstantBufferDesc(sizeof(ForwardShadingLightConstants), "ForwardShadingLightConstants"));
+    m_ForwardViewCB = m_Device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(ForwardShadingViewConstants), "ForwardShadingViewConstants", params.numConstantBufferVersions));
+    m_ForwardLightCB = m_Device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(ForwardShadingLightConstants), "ForwardShadingLightConstants", params.numConstantBufferVersions));
 
     m_ViewBindingLayout = CreateViewBindingLayout();
     m_ViewBindingSet = CreateViewBindingSet();
     m_LightBindingLayout = CreateLightBindingLayout();
-
-    m_PsoOpaque = CreateGraphicsPipeline(MD_OPAQUE, sampleView, sampleFramebuffer, params);
-    m_PsoAlphaTested = CreateGraphicsPipeline(MD_ALPHA_TESTED, sampleView, sampleFramebuffer, params);
-    m_PsoTransparent = CreateGraphicsPipeline(MD_TRANSPARENT, sampleView, sampleFramebuffer, params);
 }
 
 void ForwardShadingPass::ResetBindingCache()
 {
     m_MaterialBindings->Clear();
     m_LightBindingSets.clear();
-    m_CurrentLightBindingSet = nullptr;
 }
 
-#ifdef _WIN32
-static NV_CUSTOM_SEMANTIC g_CustomSemantics[] = {
-    { NV_CUSTOM_SEMANTIC_VERSION, NV_X_RIGHT_SEMANTIC, "NV_X_RIGHT", false, 0, 0, 0 },
-    { NV_CUSTOM_SEMANTIC_VERSION, NV_VIEWPORT_MASK_SEMANTIC, "NV_VIEWPORT_MASK", false, 0, 0, 0 }
-};
-#endif // _WIN32
-
-nvrhi::ShaderHandle ForwardShadingPass::CreateVertexShader(ShaderFactory& shaderFactory, const IView* sampleView, const CreateParameters& params)
+nvrhi::ShaderHandle ForwardShadingPass::CreateVertexShader(ShaderFactory& shaderFactory, const CreateParameters& params)
 {
-    if (sampleView->IsStereoView())
-    {
-        std::vector<ShaderMacro> Macros;
-        Macros.push_back(ShaderMacro("SINGLE_PASS_STEREO", "1"));
-
-        nvrhi::ShaderDesc shaderDesc(nvrhi::ShaderType::SHADER_VERTEX);
-
-#ifdef _WIN32
-        shaderDesc.numCustomSemantics = dim(g_CustomSemantics);
-        shaderDesc.pCustomSemantics = g_CustomSemantics;
-#else // _WIN32
-		assert(!"check how custom semantics should work without nvapi / on vk");
-#endif // _WIN32
-
-        return shaderFactory.CreateShader(ShaderLocation::FRAMEWORK, "passes/forward_vs.hlsl", "main", &Macros, shaderDesc);
-    }
-    else
-    {
-        std::vector<ShaderMacro> Macros;
-        Macros.push_back(ShaderMacro("SINGLE_PASS_STEREO", "0"));
-
-        return shaderFactory.CreateShader(ShaderLocation::FRAMEWORK, "passes/forward_vs.hlsl", "main", &Macros, nvrhi::ShaderType::SHADER_VERTEX);
-    }
-
+    return shaderFactory.CreateShader("donut/passes/forward_vs.hlsl", "main", nullptr, nvrhi::ShaderType::Vertex);
 }
 
-nvrhi::ShaderHandle ForwardShadingPass::CreateGeometryShader(ShaderFactory& shaderFactory, const IView* sampleView, const CreateParameters& params)
+nvrhi::ShaderHandle ForwardShadingPass::CreateGeometryShader(ShaderFactory& shaderFactory, const CreateParameters& params)
 {
-    if (sampleView->IsStereoView())
+    if (params.singlePassCubemap)
     {
-        std::vector<ShaderMacro> GeometryShaderMacros;
-        GeometryShaderMacros.push_back(ShaderMacro("MOTION_VECTORS", "0"));
-
-        nvrhi::ShaderDesc geometryShaderDesc(nvrhi::ShaderType::SHADER_GEOMETRY);
-        geometryShaderDesc.fastGSFlags = nvrhi::FastGeometryShaderFlags::FORCE_FAST_GS;
-        
-#ifdef _WIN32
-        geometryShaderDesc.numCustomSemantics = dim(g_CustomSemantics);
-        geometryShaderDesc.pCustomSemantics = g_CustomSemantics;
-#else // _WIN32
-		assert(!"check how custom semantics should work without nvapi / on vk");
-#endif // _WIN32
-
-        return shaderFactory.CreateShader(ShaderLocation::FRAMEWORK, "passes/forward_gs.hlsl", "main", &GeometryShaderMacros, geometryShaderDesc);
-    }
-    else if (sampleView->IsCubemapView())
-    {
-        nvrhi::ShaderDesc desc(nvrhi::ShaderType::SHADER_GEOMETRY);
-        desc.fastGSFlags = nvrhi::FastGeometryShaderFlags::Enum(
-            nvrhi::FastGeometryShaderFlags::FORCE_FAST_GS |
-            nvrhi::FastGeometryShaderFlags::USE_VIEWPORT_MASK |
-            nvrhi::FastGeometryShaderFlags::OFFSET_RT_INDEX_BY_VP_INDEX);
+        nvrhi::ShaderDesc desc(nvrhi::ShaderType::Geometry);
+        desc.fastGSFlags = nvrhi::FastGeometryShaderFlags(
+            nvrhi::FastGeometryShaderFlags::ForceFastGS |
+            nvrhi::FastGeometryShaderFlags::UseViewportMask |
+            nvrhi::FastGeometryShaderFlags::OffsetTargetIndexByViewportIndex);
 
         desc.pCoordinateSwizzling = CubemapView::GetCubemapCoordinateSwizzle();
 
-        return shaderFactory.CreateShader(ShaderLocation::FRAMEWORK, "passes/cubemap_gs.hlsl", "main", nullptr, desc);
+        return shaderFactory.CreateShader("donut/passes/cubemap_gs.hlsl", "main", nullptr, desc);
     }
-    else
-    {
-        return nullptr;
-    }
+
+    return nullptr;
 }
 
-nvrhi::ShaderHandle ForwardShadingPass::CreatePixelShader(ShaderFactory& shaderFactory, const IView* sampleView, const CreateParameters& params)
+nvrhi::ShaderHandle ForwardShadingPass::CreatePixelShader(ShaderFactory& shaderFactory, const CreateParameters& params, bool transmissiveMaterial)
 {
     std::vector<ShaderMacro> Macros;
-    Macros.push_back(ShaderMacro("SINGLE_PASS_STEREO", sampleView->IsStereoView() ? "1" : "0"));
+    Macros.push_back(ShaderMacro("TRANSMISSIVE_MATERIAL", transmissiveMaterial ? "1" : "0"));
 
-    return shaderFactory.CreateShader(ShaderLocation::FRAMEWORK, "passes/forward_ps.hlsl", "main", &Macros, nvrhi::ShaderType::SHADER_PIXEL);
+    return shaderFactory.CreateShader("donut/passes/forward_ps.hlsl", "main", &Macros, nvrhi::ShaderType::Pixel);
 }
 
 nvrhi::InputLayoutHandle ForwardShadingPass::CreateInputLayout(nvrhi::IShader* vertexShader, const CreateParameters& params)
 {
-    std::vector<nvrhi::VertexAttributeDesc> inputDescs =
+    const nvrhi::VertexAttributeDesc inputDescs[] =
     {
-        VertexAttribute::GetAttributeDesc(VertexAttribute::POSITION, "POS", 0),
-        VertexAttribute::GetAttributeDesc(VertexAttribute::TEXCOORD1, "UV", 1),
-        VertexAttribute::GetAttributeDesc(VertexAttribute::NORMAL, "NORMAL", 2),
-        VertexAttribute::GetAttributeDesc(VertexAttribute::TANGENT, "TANGENT", 3),
-        VertexAttribute::GetAttributeDesc(VertexAttribute::BITANGENT, "BITANGENT", 4),
-        VertexAttribute::GetAttributeDesc(VertexAttribute::TRANSFORM, "TRANSFORM", 5),
+        GetVertexAttributeDesc(VertexAttribute::Position, "POS", 0),
+        GetVertexAttributeDesc(VertexAttribute::PrevPosition, "PREV_POS", 1),
+        GetVertexAttributeDesc(VertexAttribute::TexCoord1, "TEXCOORD", 2),
+        GetVertexAttributeDesc(VertexAttribute::Normal, "NORMAL", 3),
+        GetVertexAttributeDesc(VertexAttribute::Tangent, "TANGENT", 4),
+        GetVertexAttributeDesc(VertexAttribute::Transform, "TRANSFORM", 5),
     };
 
-    return m_Device->createInputLayout(inputDescs.data(), static_cast<uint32_t>(inputDescs.size()), vertexShader);
+    return m_Device->createInputLayout(inputDescs, uint32_t(std::size(inputDescs)), vertexShader);
 }
 
 nvrhi::BindingLayoutHandle ForwardShadingPass::CreateViewBindingLayout()
 {
     nvrhi::BindingLayoutDesc viewLayoutDesc;
-    viewLayoutDesc.VS = {
-        { 0, nvrhi::ResourceType::VolatileConstantBuffer }
-    };
-    viewLayoutDesc.PS = {
-        { 1, nvrhi::ResourceType::VolatileConstantBuffer },
-        { 2, nvrhi::ResourceType::VolatileConstantBuffer },
-        { 1, nvrhi::ResourceType::Sampler }
+    viewLayoutDesc.visibility = nvrhi::ShaderType::All;
+    viewLayoutDesc.bindings = {
+        nvrhi::BindingLayoutItem::VolatileConstantBuffer(1),
+        nvrhi::BindingLayoutItem::VolatileConstantBuffer(2),
+        nvrhi::BindingLayoutItem::Sampler(1)
     };
 
     return m_Device->createBindingLayout(viewLayoutDesc);
@@ -189,10 +146,7 @@ nvrhi::BindingLayoutHandle ForwardShadingPass::CreateViewBindingLayout()
 nvrhi::BindingSetHandle ForwardShadingPass::CreateViewBindingSet()
 {
     nvrhi::BindingSetDesc bindingSetDesc;
-    bindingSetDesc.VS = {
-        nvrhi::BindingSetItem::ConstantBuffer(0, m_ForwardViewCB)
-    };
-    bindingSetDesc.PS = {
+    bindingSetDesc.bindings = {
         nvrhi::BindingSetItem::ConstantBuffer(1, m_ForwardViewCB),
         nvrhi::BindingSetItem::ConstantBuffer(2, m_ForwardLightCB),
         nvrhi::BindingSetItem::Sampler(1, m_ShadowSampler)
@@ -205,13 +159,14 @@ nvrhi::BindingSetHandle ForwardShadingPass::CreateViewBindingSet()
 nvrhi::BindingLayoutHandle ForwardShadingPass::CreateLightBindingLayout()
 {
     nvrhi::BindingLayoutDesc lightProbeBindingDesc;
-    lightProbeBindingDesc.PS = {
-        { 4, nvrhi::ResourceType::Texture_SRV },
-        { 5, nvrhi::ResourceType::Texture_SRV },
-        { 6, nvrhi::ResourceType::Texture_SRV },
-        { 7, nvrhi::ResourceType::Texture_SRV },
-        { 2, nvrhi::ResourceType::Sampler },
-        { 3, nvrhi::ResourceType::Sampler }
+    lightProbeBindingDesc.visibility = nvrhi::ShaderType::Pixel;
+    lightProbeBindingDesc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(10),
+        nvrhi::BindingLayoutItem::Texture_SRV(11),
+        nvrhi::BindingLayoutItem::Texture_SRV(12),
+        nvrhi::BindingLayoutItem::Texture_SRV(13),
+        nvrhi::BindingLayoutItem::Sampler(2),
+        nvrhi::BindingLayoutItem::Sampler(3)
     };
 
     return m_Device->createBindingLayout(lightProbeBindingDesc);
@@ -221,11 +176,11 @@ nvrhi::BindingSetHandle ForwardShadingPass::CreateLightBindingSet(nvrhi::ITextur
 {
     nvrhi::BindingSetDesc bindingSetDesc;
 
-    bindingSetDesc.PS = {
-        nvrhi::BindingSetItem::Texture_SRV(4, shadowMapTexture ? shadowMapTexture : m_CommonPasses->m_BlackTexture2DArray.Get()),
-        nvrhi::BindingSetItem::Texture_SRV(5, diffuse ? diffuse : m_CommonPasses->m_BlackCubeMapArray.Get()),
-        nvrhi::BindingSetItem::Texture_SRV(6, specular ? specular : m_CommonPasses->m_BlackCubeMapArray.Get()),
-        nvrhi::BindingSetItem::Texture_SRV(7, environmentBrdf ? environmentBrdf : m_CommonPasses->m_BlackTexture.Get()),
+    bindingSetDesc.bindings = {
+        nvrhi::BindingSetItem::Texture_SRV(10, shadowMapTexture ? shadowMapTexture : m_CommonPasses->m_BlackTexture2DArray.Get()),
+        nvrhi::BindingSetItem::Texture_SRV(11, diffuse ? diffuse : m_CommonPasses->m_BlackCubeMapArray.Get()),
+        nvrhi::BindingSetItem::Texture_SRV(12, specular ? specular : m_CommonPasses->m_BlackCubeMapArray.Get()),
+        nvrhi::BindingSetItem::Texture_SRV(13, environmentBrdf ? environmentBrdf : m_CommonPasses->m_BlackTexture.Get()),
         nvrhi::BindingSetItem::Sampler(2, m_CommonPasses->m_LinearWrapSampler),
         nvrhi::BindingSetItem::Sampler(3, m_CommonPasses->m_LinearClampSampler)
     };
@@ -234,94 +189,110 @@ nvrhi::BindingSetHandle ForwardShadingPass::CreateLightBindingSet(nvrhi::ITextur
     return m_Device->createBindingSet(bindingSetDesc, m_LightBindingLayout);
 }
 
-nvrhi::GraphicsPipelineHandle ForwardShadingPass::CreateGraphicsPipeline(MaterialDomain domain, const IView* sampleView, nvrhi::IFramebuffer* sampleFramebuffer, const CreateParameters& params)
+nvrhi::GraphicsPipelineHandle ForwardShadingPass::CreateGraphicsPipeline(PipelineKey key, nvrhi::IFramebuffer* framebuffer)
 {
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.inputLayout = m_InputLayout;
     pipelineDesc.VS = m_VertexShader;
     pipelineDesc.GS = m_GeometryShader;
-    pipelineDesc.PS = m_PixelShader;
-    pipelineDesc.renderState.rasterState.frontCounterClockwise = true;
-    pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_BACK;
-    pipelineDesc.renderState.blendState.alphaToCoverage = false;
+    pipelineDesc.renderState.rasterState.frontCounterClockwise = key.bits.frontCounterClockwise;
+    pipelineDesc.renderState.rasterState.setCullMode(key.bits.cullMode);
+    pipelineDesc.renderState.blendState.alphaToCoverageEnable = false;
     pipelineDesc.bindingLayouts = { m_MaterialBindings->GetLayout(), m_ViewBindingLayout, m_LightBindingLayout };
 
-    pipelineDesc.renderState.depthStencilState.depthFunc = sampleView->IsReverseDepth()
-        ? nvrhi::DepthStencilState::COMPARISON_GREATER_EQUAL
-        : nvrhi::DepthStencilState::COMPARISON_LESS_EQUAL;
-
-    if (sampleView->IsStereoView())
+    pipelineDesc.renderState.depthStencilState
+        .setDepthFunc(key.bits.reverseDepth
+            ? nvrhi::ComparisonFunc::GreaterOrEqual
+            : nvrhi::ComparisonFunc::LessOrEqual);
+    
+    switch (key.bits.domain)  // NOLINT(clang-diagnostic-switch-enum)
     {
-        pipelineDesc.renderState.singlePassStereo.enabled = true;
-        pipelineDesc.renderState.singlePassStereo.independentViewportMask = true;
-        pipelineDesc.renderState.singlePassStereo.renderTargetIndexOffset = 0;
+    case MaterialDomain::Opaque:
+        pipelineDesc.PS = m_PixelShader;
+        break;
+
+    case MaterialDomain::AlphaTested:
+        pipelineDesc.PS = m_PixelShader;
+        pipelineDesc.renderState.blendState.alphaToCoverageEnable = true;
+        break;
+
+    case MaterialDomain::AlphaBlended: {
+        pipelineDesc.PS = m_PixelShader;
+        pipelineDesc.renderState.blendState.alphaToCoverageEnable = false;
+        pipelineDesc.renderState.blendState.targets[0]
+            .enableBlend()
+            .setSrcBlend(nvrhi::BlendFactor::SrcAlpha)
+            .setDestBlend(nvrhi::BlendFactor::InvSrcAlpha)
+            .setSrcBlendAlpha(nvrhi::BlendFactor::Zero)
+            .setDestBlendAlpha(nvrhi::BlendFactor::One);
+        
+        pipelineDesc.renderState.depthStencilState.disableDepthWrite();
+        break;
     }
 
-    switch (domain)
-    {
-    case MD_ALPHA_TESTED:
-        pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        pipelineDesc.renderState.blendState.alphaToCoverage = true;
-        break;
+    case MaterialDomain::Transmissive:
+    case MaterialDomain::TransmissiveAlphaTested:
+    case MaterialDomain::TransmissiveAlphaBlended: {
+        pipelineDesc.PS = m_PixelShaderTransmissive;
+        pipelineDesc.renderState.blendState.alphaToCoverageEnable = false;
+        pipelineDesc.renderState.blendState.targets[0]
+            .enableBlend()
+            .setSrcBlend(nvrhi::BlendFactor::One)
+            .setDestBlend(nvrhi::BlendFactor::Src1Color)
+            .setSrcBlendAlpha(nvrhi::BlendFactor::Zero)
+            .setDestBlendAlpha(nvrhi::BlendFactor::One);
 
-    case MD_TRANSPARENT:
-        pipelineDesc.renderState.blendState.alphaToCoverage = false;
-        pipelineDesc.renderState.blendState.blendEnable[0] = true;
-        pipelineDesc.renderState.blendState.blendOp[0] = nvrhi::BlendState::BLEND_OP_ADD;
-        pipelineDesc.renderState.blendState.srcBlend[0] = nvrhi::BlendState::BLEND_ONE;
-        pipelineDesc.renderState.blendState.destBlend[0] = nvrhi::BlendState::BLEND_INV_SRC_ALPHA;
-        pipelineDesc.renderState.blendState.srcBlendAlpha[0] = nvrhi::BlendState::BLEND_ZERO;
-        pipelineDesc.renderState.blendState.destBlendAlpha[0] = nvrhi::BlendState::BLEND_ONE;
-        pipelineDesc.renderState.depthStencilState.depthWriteMask = nvrhi::DepthStencilState::DEPTH_WRITE_MASK_ZERO;
+        pipelineDesc.renderState.depthStencilState.disableDepthWrite();
         break;
-
-    case MD_OPAQUE:
+    }
     default:
-        break;
+        return nullptr;
     }
 
-    return m_Device->createGraphicsPipeline(pipelineDesc, sampleFramebuffer);
+    return m_Device->createGraphicsPipeline(pipelineDesc, framebuffer);
 }
 
 std::shared_ptr<MaterialBindingCache> ForwardShadingPass::CreateMaterialBindingCache(CommonRenderPasses& commonPasses)
 {
     std::vector<MaterialResourceBinding> materialBindings = {
-        { MaterialResource::CONSTANT_BUFFER, 0, 0 },
-        { MaterialResource::DIFFUSE_TEXTURE, 0, 0 },
-        { MaterialResource::SPECULAR_TEXTURE, 1, 0 },
-        { MaterialResource::NORMALS_TEXTURE, 2, 0 },
-        { MaterialResource::EMISSIVE_TEXTURE, 3, 0 },
-        { MaterialResource::SAMPLER, 0, 0 },
+        { MaterialResource::ConstantBuffer, 0 },
+        { MaterialResource::DiffuseTexture, 0 },
+        { MaterialResource::SpecularTexture, 1 },
+        { MaterialResource::NormalTexture, 2 },
+        { MaterialResource::EmissiveTexture, 3 },
+        { MaterialResource::OcclusionTexture, 4 },
+        { MaterialResource::TransmissionTexture, 5 },
+        { MaterialResource::Sampler, 0 },
     };
 
     return std::make_shared<MaterialBindingCache>(
         m_Device,
-        nvrhi::ShaderType::SHADER_PIXEL,
+        nvrhi::ShaderType::Pixel,
+        /* registerSpace = */ 0,
         materialBindings,
         commonPasses.m_AnisotropicWrapSampler,
         commonPasses.m_GrayTexture,
         commonPasses.m_BlackTexture);
 }
 
-void ForwardShadingPass::PrepareForView(
-    nvrhi::ICommandList* commandList, 
-    const IView* view, 
+void ForwardShadingPass::SetupView(
+    GeometryPassContext& abstractContext,
+    nvrhi::ICommandList* commandList,
+    const IView* view,
     const IView* viewPrev)
 {
+    auto& context = static_cast<Context&>(abstractContext);
+    
     ForwardShadingViewConstants viewConstants = {};
-    if (view->IsStereoView())
-    {
-        view->GetChildView(ViewType::PLANAR, 0)->FillPlanarViewConstants(viewConstants.leftView);
-        view->GetChildView(ViewType::PLANAR, 1)->FillPlanarViewConstants(viewConstants.rightView);
-    }
-    else
-    {
-        view->FillPlanarViewConstants(viewConstants.leftView);
-    }
+    view->FillPlanarViewConstants(viewConstants.view);
     commandList->writeBuffer(m_ForwardViewCB, &viewConstants, sizeof(viewConstants));
+
+    context.keyTemplate.bits.frontCounterClockwise = view->IsMirrored();
+    context.keyTemplate.bits.reverseDepth = view->IsReverseDepth();
 }
 
 void ForwardShadingPass::PrepareLights(
+    Context& context,
     nvrhi::ICommandList* commandList,
     const std::vector<std::shared_ptr<Light>>& lights,
     dm::float3 ambientColorTop,
@@ -330,7 +301,7 @@ void ForwardShadingPass::PrepareLights(
 {
     nvrhi::ITexture* shadowMapTexture = nullptr;
     int2 shadowMapTextureSize = 0;
-    for (auto light : lights)
+    for (const auto& light : lights)
     {
         if (light->shadowMap)
         {
@@ -344,10 +315,10 @@ void ForwardShadingPass::PrepareLights(
     nvrhi::ITexture* lightProbeSpecular = nullptr;
     nvrhi::ITexture* lightProbeEnvironmentBrdf = nullptr;
 
-    for (auto probe : lightProbes)
+    for (const auto& probe : lightProbes)
     {
         if (!probe->enabled)
-            continue;;
+            continue;
 
         if (lightProbeDiffuse == nullptr || lightProbeSpecular == nullptr || lightProbeEnvironmentBrdf == nullptr)
         {
@@ -365,19 +336,24 @@ void ForwardShadingPass::PrepareLights(
         }
     }
 
-    nvrhi::BindingSetHandle& lightBindings = m_LightBindingSets[std::make_pair(shadowMapTexture, lightProbeDiffuse)];
-
-    if (!lightBindings)
     {
-        lightBindings = CreateLightBindingSet(shadowMapTexture, lightProbeDiffuse, lightProbeSpecular, lightProbeEnvironmentBrdf);
-    }
+        std::lock_guard<std::mutex> lockGuard(m_Mutex);
 
-    m_CurrentLightBindingSet = lightBindings;
+        nvrhi::BindingSetHandle& lightBindings = m_LightBindingSets[std::make_pair(shadowMapTexture, lightProbeDiffuse)];
+
+        if (!lightBindings)
+        {
+            lightBindings = CreateLightBindingSet(shadowMapTexture, lightProbeDiffuse, lightProbeSpecular, lightProbeEnvironmentBrdf);
+        }
+
+        context.lightBindingSet = lightBindings;
+    }
 
 
     ForwardShadingLightConstants constants = {};
 
     constants.shadowMapTextureSize = float2(shadowMapTextureSize);
+    constants.shadowMapTextureSizeInv = 1.f / constants.shadowMapTextureSize;
 
     int numShadows = 0;
 
@@ -417,7 +393,7 @@ void ForwardShadingPass::PrepareLights(
     constants.ambientColorTop = float4(ambientColorTop, 0.f);
     constants.ambientColorBottom = float4(ambientColorBottom, 0.f);
 
-    for (auto probe : lightProbes)
+    for (const auto& probe : lightProbes)
     {
         if (!probe->IsActive())
             continue;
@@ -439,42 +415,55 @@ ViewType::Enum ForwardShadingPass::GetSupportedViewTypes() const
     return m_SupportedViewTypes;
 }
 
-bool ForwardShadingPass::SetupMaterial(const Material* material, nvrhi::GraphicsState& state)
+bool ForwardShadingPass::SetupMaterial(GeometryPassContext& abstractContext, const Material* material, nvrhi::RasterCullMode cullMode, nvrhi::GraphicsState& state)
 {
+    auto& context = static_cast<Context&>(abstractContext);
+
     nvrhi::IBindingSet* materialBindingSet = m_MaterialBindings->GetMaterialBindingSet(material);
 
     if (!materialBindingSet)
         return false;
 
-    switch (material->domain)
+    if (material->domain >= MaterialDomain::Count || cullMode > nvrhi::RasterCullMode::None)
     {
-    case MD_OPAQUE:
-        state.pipeline = m_PsoOpaque;
-        break;
-    case MD_ALPHA_TESTED:
-        state.pipeline = m_PsoAlphaTested;
-        break;
-    case MD_TRANSPARENT:
-        state.pipeline = m_PsoTransparent;
-        break;
-    default:
+        assert(false);
         return false;
     }
 
-    state.bindings = { materialBindingSet, m_ViewBindingSet, m_CurrentLightBindingSet };
+    PipelineKey key = context.keyTemplate;
+    key.bits.cullMode = cullMode;
+    key.bits.domain = material->domain;
+
+    nvrhi::GraphicsPipelineHandle& pipeline = m_Pipelines[key.value];
+    
+    if (!pipeline)
+    {
+        std::lock_guard<std::mutex> lockGuard(m_Mutex);
+
+        if (!pipeline)
+            pipeline = CreateGraphicsPipeline(key, state.framebuffer);
+
+        if (!pipeline)
+            return false;
+    }
+
+    assert(pipeline->getFramebufferInfo() == state.framebuffer->getFramebufferInfo());
+
+    state.pipeline = pipeline;
+    state.bindings = { materialBindingSet, m_ViewBindingSet, context.lightBindingSet };
 
     return true;
 }
 
-void ForwardShadingPass::SetupInputBuffers(const BufferGroup* buffers, nvrhi::GraphicsState& state)
+void ForwardShadingPass::SetupInputBuffers(GeometryPassContext& abstractContext, const BufferGroup* buffers, nvrhi::GraphicsState& state)
 {
     state.vertexBuffers = {
-    { buffers->vertexBuffers.at(VertexAttribute::POSITION), 0, 0 },
-    { buffers->vertexBuffers.at(VertexAttribute::TEXCOORD1), 1, 0 },
-    { buffers->vertexBuffers.at(VertexAttribute::NORMAL), 2, 0 },
-    { buffers->vertexBuffers.at(VertexAttribute::TANGENT), 3, 0 },
-    { buffers->vertexBuffers.at(VertexAttribute::BITANGENT), 4, 0 },
-    { buffers->vertexBuffers.at(VertexAttribute::TRANSFORM), 5, 0 }
+        { buffers->vertexBuffer, 0, buffers->getVertexBufferRange(VertexAttribute::Position).byteOffset },
+        { buffers->vertexBuffer, 1, buffers->getVertexBufferRange(VertexAttribute::PrevPosition).byteOffset },
+        { buffers->vertexBuffer, 2, buffers->getVertexBufferRange(VertexAttribute::TexCoord1).byteOffset },
+        { buffers->vertexBuffer, 3, buffers->getVertexBufferRange(VertexAttribute::Normal).byteOffset },
+        { buffers->vertexBuffer, 4, buffers->getVertexBufferRange(VertexAttribute::Tangent).byteOffset },
+        { buffers->instanceBuffer, 5, 0 }
     };
 
     state.indexBuffer = { buffers->indexBuffer, nvrhi::Format::R32_UINT, 0 };

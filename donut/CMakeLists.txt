@@ -1,6 +1,27 @@
+#
+# Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+# and/or sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+
 project(donut)
-#cmake_minimum_required(VERSION 3.11.1)
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.10)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,73 +39,54 @@ string(APPEND CMAKE_CXX_FLAGS_DEBUG " -D_DEBUG")
 
 include(CMakeDependentOption)
 
+option(DONUT_WITH_NVRHI "Enable NVRHI and related projects" ON)
+
 cmake_dependent_option(DONUT_WITH_DX11 "Enable the DX11 version of Donut" ON "WIN32" OFF)
 cmake_dependent_option(DONUT_WITH_DX12 "Enable the DX12 version of Donut" ON "WIN32" OFF)
-option(DONUT_WITH_VULKAN "Enable the Vulkan version of Donut" OFF)
-option(DONUT_USE_PACKMAN_VULKAN "Use a vulkan SDK from packman; disable to use a locally installed SDK" ON)
+option(DONUT_WITH_VULKAN "Enable the Vulkan version of Donut" ON)
 
-option(DONUT_WITH_ASSIMP "Include ASSIMP+" OFF)
 option(DONUT_WITH_AUDIO "Include Audio features (XAudio2)" OFF)
-cmake_dependent_option(DONUT_WITH_HBAO_PLUS "Include HBAO+" ON "WIN32" OFF)
 option(DONUT_WITH_LZ4 "Include LZ4" ON)
-option(DONUT_WITH_SL "Use SL integration" ON)
-cmake_dependent_option(DONUT_WITH_NVAPI "Include NVAPI" ON "WIN32" OFF)
-set(DONUT_WITH_OCULUS_VR OFF)
-option(DONUT_WITH_RTAO "Include RTAO" OFF)
-option(DONUT_WITH_RT_REFLECTIONS "Include the GameWorks RTReflections library" OFF)
-option(DONUT_WITH_SQLITE "Include SQLite" ON)
-set(DONUT_WITH_VOLUME_LIGHTING OFF)
-
-option(DONUT_WITH_TOOLS "Include DCC pipeline tools" OFF)
-
-if (DEFINED DEPENDENCIES_ROOT AND DONUT_USE_PACKMAN_VULKAN)
-    if (WIN32)
-        file(TO_CMAKE_PATH ${DEPENDENCIES_ROOT}/chk/vulkansdk/1.1.106.0-windows-x86_64 VULKAN_PACKMAN_PATH)
-    else()
-        file(TO_CMAKE_PATH ${DEPENDENCIES_ROOT}/chk/vulkansdk/1.1.130.0-linux-x86_64 VULKAN_PACKMAN_PATH)
-    endif()
-    set(Vulkan_SDK_ROOT_DIR ${VULKAN_PACKMAN_PATH})
-    install(DIRECTORY ${VULKAN_PACKMAN_PATH} DESTINATION "donut/thirdparty/chk/vulkansdk"
-        USE_SOURCE_PERMISSIONS PATTERN "*.pdb" EXCLUDE
-    )
-endif()
+option(DONUT_WITH_MINIZ "Include miniz (support for zip archives)" ON)
+option(DONUT_WITH_TASKFLOW "Include TaskFlow" ON)
+option(DONUT_WITH_TINYEXR "Include TinyEXR" ON)
+option(DONUT_WITH_UNIT_TESTS "Donut unit-tests (see CMake/CTest documentation)" OFF)
 
 add_subdirectory(thirdparty)
 
-# warning: thirdparty must be included before nvrhi because that folder defines the 'nvapi' target
-add_subdirectory(nvrhi)
+if (DONUT_WITH_NVRHI)
+    set(NVRHI_WITH_DX11 "${DONUT_WITH_DX11}" CACHE BOOL "" FORCE)
+    set(NVRHI_WITH_DX12 "${DONUT_WITH_DX12}" CACHE BOOL "" FORCE)
+    set(NVRHI_WITH_VULKAN "${DONUT_WITH_VULKAN}" CACHE BOOL "" FORCE)
+    add_subdirectory(nvrhi)
 
-# set up for compileshaders.cmake
-if (DEFINED DEPENDENCIES_ROOT)
-    file(TO_CMAKE_PATH ${DEPENDENCIES_ROOT}/chk/python/3.7.0-windows-x64 PYTHON_PACKMAN_PATH)
-    if (EXISTS "${PYTHON_PACKMAN_PATH}")
-    	set(Python_ROOT_DIR ${PYTHON_PACKMAN_PATH})
+    set(DONUT_SHADER_INCLUDE_DIR ${CMAKE_CURRENT_LIST_DIR}/include CACHE PATH "" FORCE)
+
+    if (DONUT_WITH_DX11)
+        find_package(FXC REQUIRED)
     endif()
+
+    if(DONUT_WITH_DX12)
+        find_package(DXCdxil REQUIRED)
+        set(DONUT_USE_DXIL_ON_DX12 TRUE CACHE BOOL "Use DXC to compile DXIL shaders on DX12 - otherwise FXC and DXBC")
+    endif()
+
+    if (DONUT_WITH_VULKAN)
+        find_package(DXCspirv REQUIRED)
+    endif()
+
+    add_subdirectory(shaders)
 endif()
-find_package(Python 3 COMPONENTS Interpreter REQUIRED)
-
-set(DONUT_SHADER_INCLUDE_DIR ${CMAKE_CURRENT_LIST_DIR}/include CACHE PATH "" FORCE)
-
-if(DONUT_WITH_DX12)
-	set(DONUT_USE_DXIL_ON_DX12 TRUE CACHE BOOL "Use DXC to compile DXIL shaders on DX12 - otherwise FXC and DXBC")
-endif()
-
-add_subdirectory(shaders)
 
 include(donut-core.cmake)
-include(donut-engine.cmake)
-include(donut-render.cmake)
-include(donut-app.cmake)
-
-if(DONUT_WITH_FEATURE_DEMO)
-    add_subdirectory(feature_demo)
+if (DONUT_WITH_NVRHI)
+    include(donut-engine.cmake)
+    include(donut-render.cmake)
+    include(donut-app.cmake)
 endif()
 
-if(DONUT_WITH_TOOLS)
-    add_subdirectory(tools)
+if (DONUT_WITH_UNIT_TESTS)
+    include(CTest)
+    add_subdirectory(tests)
 endif()
 
-install(DIRECTORY src;include;cmake;scripts DESTINATION "donut")
-file(GLOB CMAKE_FILES *.cmake)
-install(FILES CMakeLists.txt;${CMAKE_FILES} DESTINATION "donut")
-#TODO packman directories

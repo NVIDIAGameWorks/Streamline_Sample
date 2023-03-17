@@ -1,3 +1,25 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 #include <cmath>
 #include <algorithm>
@@ -20,6 +42,9 @@ namespace donut::math
         matrix() { } \
         matrix(const T* v) \
             { for (int i = 0; i < rows*cols; ++i) m_data[i] = v[i]; } \
+        /* Column accessor */ \
+        vector<T, rows> col(int j) const { vector<T, rows> v; for (int i = 0; i < rows; i++) \
+            v[i] = m_data[i * cols + j]; return v; } \
         /* Conversion to bool is not allowed (otherwise would \
            happen implicitly through array conversions) */ \
         private: operator bool();
@@ -68,7 +93,7 @@ namespace donut::math
         {
             return matrix(T(0));
         }
-
+		
         MATRIX_MEMBERS(T, rows, cols)
     };
 
@@ -98,7 +123,14 @@ namespace donut::math
         constexpr matrix(const vector<T, 2>& _row0, const vector<T, 2>& _row1)
             : m00(_row0.x), m01(_row0.y)
             , m10(_row1.x), m11(_row1.y) { }
-        
+
+		template<typename U>
+		explicit constexpr matrix(const matrix<U, 2, 2>& m)
+		{
+			for (int i = 0; i < 4; ++i)
+				m_data[i] = T(m.m_data[i]);
+		}
+
         constexpr static matrix from_cols(const vector<T, 2>& col0, const vector<T, 2>& col1)
         { 
             return matrix(
@@ -170,6 +202,13 @@ namespace donut::math
             : m00(m.m00), m01(m.m01), m02(m.m02)
             , m10(m.m10), m11(m.m11), m12(m.m12)
             , m20(m.m20), m21(m.m21), m22(m.m22) { }
+
+		template<typename U>
+		explicit constexpr matrix(const matrix<U, 3, 3>& m)
+		{
+			for (int i = 0; i < 9; ++i)
+				m_data[i] = T(m.m_data[i]);
+		}
 
         constexpr static matrix from_cols(const vector<T, 3>& col0, const vector<T, 3>& col1, const vector<T, 3>& col2)
         {
@@ -246,6 +285,13 @@ namespace donut::math
             , m10(m.m10), m11(m.m11), m12(m.m12), m13(m.m13)
             , m20(m.m20), m21(m.m21), m22(m.m22), m23(m.m23) { }
 
+		template<typename U>
+		explicit constexpr matrix(const matrix<U, 3, 4>& m)
+		{
+			for (int i = 0; i < 12; ++i)
+				m_data[i] = T(m.m_data[i]);
+		}
+
         constexpr static matrix from_cols(const vector<T, 3>& col0, const vector<T, 3>& col1, const vector<T, 3>& col2, const vector<T, 3>& col3)
         {
             return matrix(
@@ -321,6 +367,13 @@ namespace donut::math
             , m20(m.m20), m21(m.m21), m22(m.m22), m23(m.m23)
             , m30(_row3.x), m31(_row3.y), m32(_row3.z), m33(_row3.w) { }
 
+		template<typename U>
+		explicit constexpr matrix(const matrix<U, 4, 4>& m)
+		{
+			for (int i = 0; i < 16; ++i)
+				m_data[i] = T(m.m_data[i]);
+		}
+
         constexpr static matrix from_cols(const vector<T, 4>& col0, const vector<T, 4>& col1, const vector<T, 4>& col2, const vector<T, 4>& col3)
         {
             return matrix(
@@ -364,56 +417,16 @@ namespace donut::math
 #undef MATRIX_MEMBERS
     
 
-	// Concrete matrices, and their maker functions,
-	// for the most common types and dimensions
+	// Concrete matrices for the most common types and dimensions
 
 #define DEFINE_CONCRETE_MATRICES(type) \
 			typedef matrix<type, 2, 2> type##2x2; \
 			typedef matrix<type, 3, 3> type##3x3; \
 			typedef matrix<type, 3, 4> type##3x4; \
-			typedef matrix<type, 4, 4> type##4x4; \
-			typedef matrix<type, 2, 2> const & type##2x2_arg; \
-			typedef matrix<type, 3, 3> const & type##3x3_arg; \
-			typedef matrix<type, 3, 4> const & type##3x4_arg; \
-			typedef matrix<type, 4, 4> const & type##4x4_arg; \
-			[[deprecated]] inline type##2x2 make##type##2x2(type m0, type m1, type m2, type m3) \
-				{ return type##2x2(m0, m1, m2, m3); } \
-			[[deprecated]] inline type##2x2 make##type##2x2(type##2_arg row0, type##2_arg row1) \
-				{ return type##2x2(row0, row1); } \
-			[[deprecated]] inline type##2x2 make##type##2x2Cols(type##2_arg col0, type##2_arg col1) \
-				{ return type##2x2::from_cols(col0, col1); } \
-			template <typename T> \
-			[[deprecated]] inline type##2x2 make##type##2x2(T a) \
-				{ return type##2x2(static_cast<type>(a)); } \
-			[[deprecated]] inline type##3x3 make##type##3x3(type m0, type m1, type m2, type m3, type m4, type m5, type m6, type m7, type m8) \
-				{ return type##3x3(m0, m1, m2, m3, m4, m5, m6, m7, m8); } \
-			[[deprecated]] inline type##3x3 make##type##3x3(type##3_arg row0, type##3_arg row1, type##3_arg row2) \
-				{ return type##3x3(row0, row1, row2); } \
-			[[deprecated]] inline type##3x3 make##type##3x3Cols(type##3_arg col0, type##3_arg col1, type##3_arg col2) \
-				{ return type##3x3::from_cols(col0, col1, col2); } \
-			template <typename T> \
-			[[deprecated]] inline type##3x3 make##type##3x3(T a) \
-				{ return type##3x3(static_cast<type>(a)); } \
-			[[deprecated]] inline type##3x4 make##type##3x4(type m0, type m1, type m2, type m3, type m4, type m5, type m6, type m7, type m8, type m9, type m10, type m11) \
-				{ return type##3x4(m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11); } \
-			[[deprecated]] inline type##3x4 make##type##3x4(type##4_arg row0, type##4_arg row1, type##4_arg row2) \
-				{ return type##3x4(row0, row1, row2); } \
-			[[deprecated]] inline type##3x4 make##type##3x4Cols(type##3_arg col0, type##3_arg col1, type##3_arg col2, type##3_arg col3) \
-				{ return type##3x4::from_cols(col0, col1, col2, col3); } \
-			template <typename T> \
-			[[deprecated]] inline type##3x4 make##type##3x4(T a) \
-				{ return type##3x4(static_cast<type>(a)); } \
-			[[deprecated]] inline type##4x4 make##type##4x4(type m0, type m1, type m2, type m3, type m4, type m5, type m6, type m7, type m8, type m9, type m10, type m11, type m12, type m13, type m14, type m15) \
-				{ return type##4x4(m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15); } \
-			[[deprecated]] inline type##4x4 make##type##4x4(type##4_arg row0, type##4_arg row1, type##4_arg row2, type##4_arg row3) \
-				{ return type##4x4(row0, row1, row2, row3); } \
-			[[deprecated]] inline type##4x4 make##type##4x4Cols(type##4_arg col0, type##4_arg col1, type##4_arg col2, type##4_arg col3) \
-				{ return type##4x4::from_cols(col0, col1, col2, col3); } \
-			template <typename T> \
-			[[deprecated]] inline type##4x4 make##type##4x4(T a) \
-				{ return type##4x4(static_cast<type>(a)); }
+			typedef matrix<type, 4, 4> type##4x4;
 
 	DEFINE_CONCRETE_MATRICES(float);
+	DEFINE_CONCRETE_MATRICES(double);
 	DEFINE_CONCRETE_MATRICES(int);
 	DEFINE_CONCRETE_MATRICES(uint);
 	DEFINE_CONCRETE_MATRICES(bool);
@@ -591,6 +604,48 @@ namespace donut::math
 		return result;
 	}
 
+	template <typename T>
+	vector<T, 3> operator * (matrix<T, 3, 3> const& a, vector<T, 3> const& b)
+	{
+		vector<T, 3> result;
+		result.x = a.row0.x * b.x + a.row0.y * b.y + a.row0.z * b.z;
+		result.y = a.row1.x * b.x + a.row1.y * b.y + a.row1.z * b.z;
+		result.z = a.row2.x * b.x + a.row2.y * b.y + a.row2.z * b.z;
+		return result;
+	}
+
+	template <typename T>
+	vector<T, 3> operator * (vector<T, 3> const& a, matrix<T, 3, 3> const& b)
+	{
+		vector<T, 3> result;
+		result.x = a.x * b.row0.x + a.y * b.row1.x + a.z * b.row2.x;
+		result.y = a.x * b.row0.y + a.y * b.row1.y + a.z * b.row2.y;
+		result.z = a.x * b.row0.z + a.y * b.row1.z + a.z * b.row2.z;
+		return result;
+	}
+
+	template <typename T>
+	vector<T, 4> operator * (matrix<T, 4, 4> const& a, vector<T, 4> const& b)
+	{
+		vector<T, 4> result;
+		result.x = a.row0.x * b.x + a.row0.y * b.y + a.row0.z * b.z + a.row0.w * b.w;
+		result.y = a.row1.x * b.x + a.row1.y * b.y + a.row1.z * b.z + a.row1.w * b.w;
+		result.z = a.row2.x * b.x + a.row2.y * b.y + a.row2.z * b.z + a.row2.w * b.w;
+		result.w = a.row3.x * b.x + a.row3.y * b.y + a.row3.z * b.z + a.row3.w * b.w;
+		return result;
+	}
+
+	template <typename T>
+	vector<T, 4> operator * (vector<T, 4> const& a, matrix<T, 4, 4> const& b)
+	{
+		vector<T, 4> result;
+		result.x = a.x * b.row0.x + a.y * b.row1.x + a.z * b.row2.x + a.w * b.row3.x;
+		result.y = a.x * b.row0.y + a.y * b.row1.y + a.z * b.row2.y + a.w * b.row3.y;
+		result.z = a.x * b.row0.z + a.y * b.row1.z + a.z * b.row2.z + a.w * b.row3.z;
+		result.w = a.x * b.row0.w + a.y * b.row1.w + a.z * b.row2.w + a.w * b.row3.w;
+		return result;
+	}
+
 	template <typename T, int n>
 	vector<T, n> operator *= (vector<T, n> & a, matrix<T, n, n> const & b)
 	{
@@ -691,9 +746,7 @@ namespace donut::math
 		matrix<T, 2, 2> result = { a[1][1], -a[0][1], -a[1][0], a[0][0] };
 		return result / determinant(a);
 	}
-
-	// !!!UNDONE: specialization for 3x3? worth it?
-
+	
 	template <typename T, int n>
 	T determinant(matrix<T, n, n> const & m)
 	{
@@ -751,6 +804,14 @@ namespace donut::math
 	T determinant(matrix<T, 2, 2> const & a)
 	{
 		return (a[0][0]*a[1][1] - a[0][1]*a[1][0]);
+	}
+
+	// Determinant specialization for 3x3
+	template <typename T>
+	T determinant(matrix<T, 3, 3> const& a)
+	{
+		return (a[0][0]*a[1][1]*a[2][2] + a[0][1]*a[1][2]*a[2][0] + a[0][2]*a[1][0]*a[2][1])
+		     - (a[2][0]*a[1][1]*a[0][2] + a[2][1]*a[1][2]*a[0][0] + a[2][2]*a[1][0]*a[0][1]);
 	}
 
 	// !!!UNDONE: specialization for 3x3? worth it?
@@ -899,8 +960,9 @@ namespace donut::math
 
 
 
-	// Generate standard projection matrices (row-vector math; right-handed view space).
-	// "D3D style" means z in [0, 1] after projection; "OGL style" means z in [-1, 1].
+	// Generate standard projection matrices (row-vector math).
+	// "D3D style" means left-handed view space, right-handed z in [0, 1] after projection;
+    // "OGL style" means right-handed view space, right-handed z in [-1, 1] after projection.
 
 	float4x4 orthoProjD3DStyle(float left, float right, float bottom, float top, float zNear, float zFar);
 	float4x4 orthoProjOGLStyle(float left, float right, float bottom, float top, float zNear, float zFar);

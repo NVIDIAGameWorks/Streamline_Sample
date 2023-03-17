@@ -6,7 +6,9 @@
 #ifndef LIB_JSONCPP_JSON_TOOL_H_INCLUDED
 #define LIB_JSONCPP_JSON_TOOL_H_INCLUDED
 
+#if !defined(JSON_IS_AMALGAMATION)
 #include <json/config.h>
+#endif
 
 // Also support old flag NO_LOCALE_SUPPORT
 #ifdef NO_LOCALE_SUPPORT
@@ -34,8 +36,8 @@ static inline char getDecimalPoint() {
 }
 
 /// Converts a unicode code-point to UTF-8.
-static inline JSONCPP_STRING codePointToUTF8(unsigned int cp) {
-  JSONCPP_STRING result;
+static inline String codePointToUTF8(unsigned int cp) {
+  String result;
 
   // based on description from http://en.wikipedia.org/wiki/UTF-8
 
@@ -69,7 +71,7 @@ enum {
 };
 
 // Defines a char buffer for use with uintToString().
-typedef char UIntToStringBuffer[uintToStringBufferSize];
+using UIntToStringBuffer = char[uintToStringBufferSize];
 
 /** Converts an unsigned integer to string.
  * @param value Unsigned integer to convert to string

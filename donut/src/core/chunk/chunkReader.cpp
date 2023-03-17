@@ -1,3 +1,24 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/core/chunk/chunk.h>
 #include <donut/core/chunk/chunkFile.h>
@@ -245,6 +266,7 @@ bool ChunkReader::loadStreamChunk_0x100(ChunkId chunkId, StreamHandle * handle) 
         }
 
         handle->elemCount = desc.elemCount;
+        handle->elemSize = desc.elemSize;
         handle->data = chunkData+sizeof(Desc);
         return true;
     }
@@ -286,6 +308,7 @@ std::shared_ptr<MeshSetBase> ChunkReader::loadMeshSetChunk_0x100(Chunk const * c
     }
 
     mset->name = uncacheString(desc.name);
+    mset->bbox = desc.bbox;
 
     StreamHandle handle;
 
@@ -346,7 +369,7 @@ std::shared_ptr<MeshSetBase> ChunkReader::loadMeshSetChunk_0x100(Chunk const * c
         } else
             return nullptr;
 
-        handle = {"Indices8", UINT32, VARY_NONE, INDEX, 0, sizeof(uint8_t), nullptr};
+        handle = {"Indices8", UINT8, VARY_NONE, INDEX, 0, sizeof(uint8_t), nullptr};
         if (loadStreamChunk_0x100(desc.streamChunkIds[Desc::MESHLET_INDICES8], &handle))
         {
             set->indices8 = (uint8_t *)handle.data;
@@ -354,12 +377,12 @@ std::shared_ptr<MeshSetBase> ChunkReader::loadMeshSetChunk_0x100(Chunk const * c
         } else
             return nullptr;
 
-        handle = {"MeshletInfo", UINT32, VARY_NONE, MESHLET_INFO, 0, 0, nullptr};
+        handle = {"Meshlet Headers", UINT32, VARY_NONE, MESHLET_INFO, 0, 0, nullptr};
         if (loadStreamChunk_0x100(desc.streamChunkIds[Desc::MESHLET_INFO], &handle))
         {
             set->meshlets = (uint32_t *)handle.data;
             set->nmeshlets = (uint32_t)handle.elemCount;
-            set->meshletSize = (uint8_t)handle.elemSize;
+            set->meshletSize = (uint8_t)(handle.elemSize / sizeof(uint32_t));
         } else
             return nullptr;
     }
@@ -404,7 +427,7 @@ std::shared_ptr<MeshSetBase const> deserialize(
             if (!reader.loadStringsTableChunk_0x100(chunks[0]))
                 return nullptr;
 
-            // load strings table chunk
+            // load meshset chunk
             reader.cfile->getChunks(CHUNKTYPE_MESHSET, chunks);
             if (chunks.size()!=1)
             {

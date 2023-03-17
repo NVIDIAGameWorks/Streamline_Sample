@@ -1,3 +1,24 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
 
 #include <donut/render/TemporalAntiAliasingPass.h>
 #include <donut/engine/FramebufferFactory.h>
@@ -8,7 +29,10 @@
 using namespace donut::math;
 #include <donut/shaders/taa_cb.h>
 
+#include <nvrhi/utils.h>
+
 #include <assert.h>
+#include <random>
 
 using namespace donut::engine;
 using namespace donut::render;
@@ -18,24 +42,19 @@ TemporalAntiAliasingPass::TemporalAntiAliasingPass(
     std::shared_ptr<ShaderFactory> shaderFactory, 
     std::shared_ptr<CommonRenderPasses> commonPasses,
     const ICompositeView& compositeView,
-    nvrhi::ITexture* sourceDepth,
-    nvrhi::ITexture* motionVectors,
-    nvrhi::ITexture* unresolvedColor,
-    nvrhi::ITexture* resolvedColor,
-    nvrhi::ITexture* feedback1,
-    nvrhi::ITexture* feedback2,
-    uint32_t motionVectorStencilMask,
-    bool useCatmullRomFilter)
+    const CreateParameters& params)
     : m_CommonPasses(commonPasses)
     , m_FrameIndex(0)
-    , m_StencilMask(motionVectorStencilMask)
+    , m_StencilMask(params.motionVectorStencilMask)
+    , m_R2Jitter(0.0f, 0.0f)
+    , m_Jitter(TemporalAntiAliasingJitter::MSAA)
 {
     const IView* sampleView = compositeView.GetChildView(ViewType::PLANAR, 0);
 
-    const nvrhi::TextureDesc& unresolvedColorDesc = unresolvedColor->GetDesc();
-    const nvrhi::TextureDesc& resolvedColorDesc = resolvedColor->GetDesc();
-    const nvrhi::TextureDesc& feedback1Desc = feedback1->GetDesc();
-    const nvrhi::TextureDesc& feedback2Desc = feedback2->GetDesc();
+    const nvrhi::TextureDesc& unresolvedColorDesc = params.unresolvedColor->getDesc();
+    const nvrhi::TextureDesc& resolvedColorDesc = params.resolvedColor->getDesc();
+    const nvrhi::TextureDesc& feedback1Desc = params.feedback1->getDesc();
+    const nvrhi::TextureDesc& feedback2Desc = params.feedback2->getDesc();
 
     assert(feedback1Desc.width == feedback2Desc.width);
     assert(feedback1Desc.height == feedback2Desc.height);
@@ -46,11 +65,11 @@ TemporalAntiAliasingPass::TemporalAntiAliasingPass(
 
     bool useStencil = false;
     nvrhi::Format stencilFormat = nvrhi::Format::UNKNOWN;
-    if (motionVectorStencilMask)
+    if (params.motionVectorStencilMask)
     {
         useStencil = true;
 
-        nvrhi::Format depthFormat = sourceDepth->GetDesc().format;
+        nvrhi::Format depthFormat = params.sourceDepth->getDesc().format;
 
         if (depthFormat == nvrhi::Format::D24S8)
             stencilFormat = nvrhi::Format::X24G8_UINT;
@@ -62,15 +81,15 @@ TemporalAntiAliasingPass::TemporalAntiAliasingPass(
 
     std::vector<ShaderMacro> MotionVectorMacros;
     MotionVectorMacros.push_back(ShaderMacro("USE_STENCIL", useStencil ? "1" : "0"));
-    m_MotionVectorPS = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/motion_vectors_ps.hlsl", "main", &MotionVectorMacros, nvrhi::ShaderType::SHADER_PIXEL);
+    m_MotionVectorPS = shaderFactory->CreateShader("donut/passes/motion_vectors_ps.hlsl", "main", &MotionVectorMacros, nvrhi::ShaderType::Pixel);
     
     std::vector<ShaderMacro> ResolveMacros;
     ResolveMacros.push_back(ShaderMacro("SAMPLE_COUNT", std::to_string(unresolvedColorDesc.sampleCount)));
-    ResolveMacros.push_back(ShaderMacro("USE_CATMULL_ROM_FILTER", useCatmullRomFilter ? "1" : "0"));
-    m_TemporalAntiAliasingCS = shaderFactory->CreateShader(ShaderLocation::FRAMEWORK, "passes/taa_cs.hlsl", "main", &ResolveMacros, nvrhi::ShaderType::SHADER_COMPUTE);
+    ResolveMacros.push_back(ShaderMacro("USE_CATMULL_ROM_FILTER", params.useCatmullRomFilter ? "1" : "0"));
+    m_TemporalAntiAliasingCS = shaderFactory->CreateShader("donut/passes/taa_cs.hlsl", "main", &ResolveMacros, nvrhi::ShaderType::Compute);
 
     nvrhi::SamplerDesc samplerDesc;
-    samplerDesc.wrapMode[0] = samplerDesc.wrapMode[1] = samplerDesc.wrapMode[2] = nvrhi::SamplerDesc::WRAP_MODE_BORDER;
+    samplerDesc.addressU = samplerDesc.addressV = samplerDesc.addressW = nvrhi::SamplerAddressMode::Border;
     samplerDesc.borderColor = nvrhi::Color(0.0f);
     m_BilinearSampler = device->createSampler(samplerDesc);
 
@@ -81,45 +100,47 @@ TemporalAntiAliasingPass::TemporalAntiAliasingPass(
     constantBufferDesc.debugName = "TemporalAntiAliasingConstants";
     constantBufferDesc.isConstantBuffer = true;
     constantBufferDesc.isVolatile = true;
+    constantBufferDesc.maxVersions = params.numConstantBufferVersions;
     m_TemporalAntiAliasingCB = device->createBuffer(constantBufferDesc);
 
-    if(sourceDepth)
+    if(params.sourceDepth)
     {
         nvrhi::BindingLayoutDesc layoutDesc;
-        layoutDesc.PS = {
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer },
-            { 0, nvrhi::ResourceType::Texture_SRV }
+        layoutDesc.visibility = nvrhi::ShaderType::Pixel;
+        layoutDesc.bindings = {
+            nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
+            nvrhi::BindingLayoutItem::Texture_SRV(0)
         };
 
         if (useStencil)
         {
-            layoutDesc.PS.push_back({ 1, nvrhi::ResourceType::Texture_SRV });
+            layoutDesc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_SRV(1));
         }
 
         m_MotionVectorsBindingLayout = device->createBindingLayout(layoutDesc);
 
         nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.PS = {
+        bindingSetDesc.bindings = {
             nvrhi::BindingSetItem::ConstantBuffer(0, m_TemporalAntiAliasingCB),
-            nvrhi::BindingSetItem::Texture_SRV(0, sourceDepth),
+            nvrhi::BindingSetItem::Texture_SRV(0, params.sourceDepth),
         };
         if (useStencil)
         {
-            bindingSetDesc.PS.push_back(nvrhi::BindingSetItem::Texture_SRV(1, sourceDepth, stencilFormat));
+            bindingSetDesc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(1, params.sourceDepth, stencilFormat));
         }
         m_MotionVectorsBindingSet = device->createBindingSet(bindingSetDesc, m_MotionVectorsBindingLayout);
 
         m_MotionVectorsFramebufferFactory = std::make_unique<FramebufferFactory>(device);
-        m_MotionVectorsFramebufferFactory->RenderTargets = { motionVectors };
+        m_MotionVectorsFramebufferFactory->RenderTargets = { params.motionVectors };
 
         nvrhi::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.primType = nvrhi::PrimitiveType::TRIANGLE_STRIP;
+        pipelineDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
         pipelineDesc.VS = m_CommonPasses->m_FullscreenVS;
         pipelineDesc.PS = m_MotionVectorPS;
         pipelineDesc.bindingLayouts = { m_MotionVectorsBindingLayout };
 
-        pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterState::CULL_NONE;
-        pipelineDesc.renderState.depthStencilState.depthEnable = false;
+        pipelineDesc.renderState.rasterState.setCullNone();
+        pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
         pipelineDesc.renderState.depthStencilState.stencilEnable = false;
 
         nvrhi::IFramebuffer* sampleFramebuffer = m_MotionVectorsFramebufferFactory->GetFramebuffer(*sampleView);
@@ -127,33 +148,22 @@ TemporalAntiAliasingPass::TemporalAntiAliasingPass(
     }
 
     {
-        nvrhi::BindingLayoutDesc layoutDesc;
-        layoutDesc.CS = {
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer },
-            { 0, nvrhi::ResourceType::Sampler },
-            { 0, nvrhi::ResourceType::Texture_SRV },
-            { 1, nvrhi::ResourceType::Texture_SRV },
-            { 2, nvrhi::ResourceType::Texture_SRV },
-            { 0, nvrhi::ResourceType::Texture_UAV },
-            { 1, nvrhi::ResourceType::Texture_UAV },
-        };
-        m_ResolveBindingLayout = device->createBindingLayout(layoutDesc);
-
         nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.CS = {
+        bindingSetDesc.bindings = {
             nvrhi::BindingSetItem::ConstantBuffer(0, m_TemporalAntiAliasingCB),
             nvrhi::BindingSetItem::Sampler(0, m_BilinearSampler),
-            nvrhi::BindingSetItem::Texture_SRV(0, unresolvedColor),
-            nvrhi::BindingSetItem::Texture_SRV(1, motionVectors),
-            nvrhi::BindingSetItem::Texture_SRV(2, feedback1),
-            nvrhi::BindingSetItem::Texture_UAV(0, resolvedColor),
-            nvrhi::BindingSetItem::Texture_UAV(1, feedback2)
+            nvrhi::BindingSetItem::Texture_SRV(0, params.unresolvedColor),
+            nvrhi::BindingSetItem::Texture_SRV(1, params.motionVectors),
+            nvrhi::BindingSetItem::Texture_SRV(2, params.feedback1),
+            nvrhi::BindingSetItem::Texture_UAV(0, params.resolvedColor),
+            nvrhi::BindingSetItem::Texture_UAV(1, params.feedback2)
         };
-        m_ResolveBindingSet = device->createBindingSet(bindingSetDesc, m_ResolveBindingLayout);
 
+        nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::Compute, 0, bindingSetDesc, m_ResolveBindingLayout, m_ResolveBindingSet);
+     
         // Swap resolvedColor and resolvedColorPrevious (t2 and u0)
-        bindingSetDesc.CS[4].resourceHandle = feedback2;
-        bindingSetDesc.CS[6].resourceHandle = feedback1;
+        bindingSetDesc.bindings[4].resourceHandle = params.feedback2;
+        bindingSetDesc.bindings[6].resourceHandle = params.feedback1;
         m_ResolveBindingSetPrevious = device->createBindingSet(bindingSetDesc, m_ResolveBindingLayout);
 
         nvrhi::ComputePipelineDesc pipelineDesc;
@@ -167,7 +177,8 @@ TemporalAntiAliasingPass::TemporalAntiAliasingPass(
 void TemporalAntiAliasingPass::RenderMotionVectors(
     nvrhi::ICommandList* commandList,
     const ICompositeView& compositeView,
-    const ICompositeView& compositeViewPrevious)
+    const ICompositeView& compositeViewPrevious,
+    dm::float3 preViewTranslationDifference)
 {
     assert(compositeView.GetNumChildViews(ViewType::PLANAR) == compositeViewPrevious.GetNumChildViews(ViewType::PLANAR));
     assert(m_MotionVectorsPso);
@@ -179,19 +190,18 @@ void TemporalAntiAliasingPass::RenderMotionVectors(
         const IView* view = compositeView.GetChildView(ViewType::PLANAR, viewIndex);
         const IView* viewPrevious = compositeViewPrevious.GetChildView(ViewType::PLANAR, viewIndex);
 
-        nvrhi::ViewportState viewportState = view->GetViewportState();
-        nvrhi::ViewportState prevViewportState = viewPrevious->GetViewportState();
-
+        const nvrhi::ViewportState viewportState = view->GetViewportState();
+        
         // This pass only works for planar, single-viewport views
-        assert(viewportState.viewports.size() == 1 && prevViewportState.viewports.size() == 1);
+        assert(viewportState.viewports.size() == 1);
 
-        const nvrhi::Viewport& prevViewport = prevViewportState.viewports[0];
+        const nvrhi::Viewport& inputViewport = viewportState.viewports[0];
 
         TemporalAntiAliasingConstants taaConstants = {};
-        affine3 viewReprojection = inverse(view->GetViewMatrix()) * viewPrevious->GetViewMatrix();
+        affine3 viewReprojection = inverse(view->GetViewMatrix()) * translation(-preViewTranslationDifference) * viewPrevious->GetViewMatrix();
         taaConstants.reprojectionMatrix = inverse(view->GetProjectionMatrix(false)) * affineToHomogeneous(viewReprojection) * viewPrevious->GetProjectionMatrix(false);
-        taaConstants.previousViewOrigin = float2(prevViewport.minX, prevViewport.minY);
-        taaConstants.previousViewSize = float2(prevViewport.width(), prevViewport.height());
+        taaConstants.inputViewOrigin = float2(inputViewport.minX, inputViewport.minY);
+        taaConstants.inputViewSize = float2(inputViewport.width(), inputViewport.height());
         taaConstants.stencilMask = m_StencilMask;
         commandList->writeBuffer(m_TemporalAntiAliasingCB, &taaConstants, sizeof(taaConstants));
 
@@ -215,46 +225,46 @@ void TemporalAntiAliasingPass::TemporalResolve(
     nvrhi::ICommandList* commandList,
     const TemporalAntiAliasingParameters& params,
     bool feedbackIsValid,
-    const ICompositeView& compositeView,
-    const ICompositeView& compositeViewPrevious)
+    const ICompositeView& compositeViewInput,
+    const ICompositeView& compositeViewOutput)
 {
-    assert(compositeView.GetNumChildViews(ViewType::PLANAR) == compositeViewPrevious.GetNumChildViews(ViewType::PLANAR));
-
+    assert(compositeViewInput.GetNumChildViews(ViewType::PLANAR) == compositeViewOutput.GetNumChildViews(ViewType::PLANAR));
+    
     commandList->beginMarker("TemporalAA");
 
-    for (uint viewIndex = 0; viewIndex < compositeView.GetNumChildViews(ViewType::PLANAR); viewIndex++)
+    for (uint viewIndex = 0; viewIndex < compositeViewInput.GetNumChildViews(ViewType::PLANAR); viewIndex++)
     {
-        const IView* view = compositeView.GetChildView(ViewType::PLANAR, viewIndex);
-        const IView* viewPrevious = compositeViewPrevious.GetChildView(ViewType::PLANAR, viewIndex);
+        const IView* viewInput = compositeViewInput.GetChildView(ViewType::PLANAR, viewIndex);
+        const IView* viewOutput = compositeViewOutput.GetChildView(ViewType::PLANAR, viewIndex);
 
-        nvrhi::ViewportState viewportState = view->GetViewportState();
-        nvrhi::Rect previousExtent = viewPrevious->GetViewExtent();
+        const nvrhi::Viewport viewportInput = viewInput->GetViewportState().viewports[0];
+        const nvrhi::Viewport viewportOutput = viewOutput->GetViewportState().viewports[0];
+        
+        TemporalAntiAliasingConstants taaConstants = {};
+        const float marginSize = 1.f;
+        taaConstants.inputViewOrigin = float2(viewportInput.minX, viewportInput.minY);
+        taaConstants.inputViewSize = float2(viewportInput.width(), viewportInput.height());
+        taaConstants.outputViewOrigin = float2(viewportOutput.minX, viewportOutput.minY);
+        taaConstants.outputViewSize = float2(viewportOutput.width(), viewportOutput.height());
+        taaConstants.inputPixelOffset = viewInput->GetPixelOffset();
+        taaConstants.outputTextureSizeInv = 1.0f / m_ResolvedColorSize;
+        taaConstants.inputOverOutputViewSize = taaConstants.inputViewSize / taaConstants.outputViewSize;
+        taaConstants.outputOverInputViewSize = taaConstants.outputViewSize / taaConstants.inputViewSize;
+        taaConstants.clampingFactor = params.enableHistoryClamping ? params.clampingFactor : -1.f;
+        taaConstants.newFrameWeight = feedbackIsValid ? params.newFrameWeight : 1.f;
+        taaConstants.pqC = dm::clamp(params.maxRadiance, 1e-4f, 1e8f);
+        taaConstants.invPqC = 1.f / taaConstants.pqC;
+        commandList->writeBuffer(m_TemporalAntiAliasingCB, &taaConstants, sizeof(taaConstants));
 
-        for (uint viewportIndex = 0; viewportIndex < viewportState.scissorRects.size(); viewportIndex++)
-        {
-            const nvrhi::Rect& scissorRect = viewportState.scissorRects[viewportIndex];
+        int2 viewportSize = int2(taaConstants.outputViewSize);
+        int2 gridSize = (viewportSize + 15) / 16;
 
-            TemporalAntiAliasingConstants taaConstants = {};
-            int marginSize = 1;
-            taaConstants.previousViewOrigin = float2(float(previousExtent.minX + marginSize), float(previousExtent.minY + marginSize));
-            taaConstants.previousViewSize = float2(float(previousExtent.maxX - previousExtent.minX - marginSize * 2), float(previousExtent.maxY - previousExtent.minY - marginSize * 2));
-            taaConstants.viewOrigin = float2(float(scissorRect.minX), float(scissorRect.minY));
-            taaConstants.viewSize = float2(float(scissorRect.maxX - scissorRect.minX), float(scissorRect.maxY - scissorRect.minY));
-            taaConstants.sourceTextureSizeInv = 1.0f / m_ResolvedColorSize;
-            taaConstants.clampingFactor = params.enableHistoryClamping ? params.clampingFactor : -1.f;
-            taaConstants.newFrameWeight = feedbackIsValid ? params.newFrameWeight : 1.f;
-            commandList->writeBuffer(m_TemporalAntiAliasingCB, &taaConstants, sizeof(taaConstants));
+        nvrhi::ComputeState state;
+        state.pipeline = m_ResolvePso;
+        state.bindings = { m_ResolveBindingSet };
+        commandList->setComputeState(state);
 
-            int2 viewportSize = int2(taaConstants.viewSize);
-            int2 gridSize = (viewportSize + 15) / 16;
-
-            nvrhi::ComputeState state;
-            state.pipeline = m_ResolvePso;
-            state.bindings = { m_ResolveBindingSet };
-            commandList->setComputeState(state);
-
-            commandList->dispatch(gridSize.x, gridSize.y, 1);
-        }
+        commandList->dispatch(gridSize.x, gridSize.y, 1);
     }
 
     commandList->endMarker();
@@ -262,17 +272,70 @@ void TemporalAntiAliasingPass::TemporalResolve(
 
 void TemporalAntiAliasingPass::AdvanceFrame()
 {
-    m_FrameIndex = (m_FrameIndex + 1) % 8;
+    m_FrameIndex++;
 
     std::swap(m_ResolveBindingSet, m_ResolveBindingSetPrevious);
+
+    if (m_Jitter == TemporalAntiAliasingJitter::R2)
+    {
+        // Advance R2 jitter sequence
+        // http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
+
+        static const float g = 1.32471795724474602596f;
+        static const float a1 = 1.0f / g;
+        static const float a2 = 1.0f / (g * g);
+        m_R2Jitter[0] = fmodf(m_R2Jitter[0] + a1, 1.0f);
+        m_R2Jitter[1] = fmodf(m_R2Jitter[1] + a2, 1.0f);
+    }
+}
+
+static float VanDerCorput(size_t base, size_t index)
+{
+    float ret = 0.0f;
+    float denominator = float(base);
+    while (index > 0)
+    {
+        size_t multiplier = index % base;
+        ret += float(multiplier) / denominator;
+        index = index / base;
+        denominator *= base;
+    }
+    return ret;
 }
 
 dm::float2 TemporalAntiAliasingPass::GetCurrentPixelOffset()
 {
-    const float2 offsets[] = {
-        float2(0.0625f, -0.1875f), float2(-0.0625f, 0.1875f), float2(0.3125f, 0.0625f), float2(-0.1875f, -0.3125f),
-        float2(-0.3125f, 0.3125f), float2(-0.4375f, 0.0625f), float2(0.1875f, 0.4375f), float2(0.4375f, -0.4375f)
-    };
+    switch (m_Jitter)
+    {
+        default:
+        case TemporalAntiAliasingJitter::MSAA:
+        {
+            const float2 offsets[] = {
+                float2(0.0625f, -0.1875f), float2(-0.0625f, 0.1875f), float2(0.3125f, 0.0625f), float2(-0.1875f, -0.3125f),
+                float2(-0.3125f, 0.3125f), float2(-0.4375f, 0.0625f), float2(0.1875f, 0.4375f), float2(0.4375f, -0.4375f)
+            };
 
-    return offsets[m_FrameIndex];
+            return offsets[m_FrameIndex % 8];
+        }
+        case TemporalAntiAliasingJitter::Halton:
+        {
+            uint32_t index = (m_FrameIndex % 16) + 1;
+            return float2{ VanDerCorput(2, index), VanDerCorput(3, index) } - 0.5f;
+        }
+        case TemporalAntiAliasingJitter::R2:
+        {
+            return m_R2Jitter - 0.5f;
+        }
+        case TemporalAntiAliasingJitter::WhiteNoise:
+        {
+            std::mt19937 rng(m_FrameIndex);
+            std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+            return float2{ dist(rng), dist(rng) };
+        }
+    }
+}
+
+void donut::render::TemporalAntiAliasingPass::SetJitter(TemporalAntiAliasingJitter jitter)
+{
+    m_Jitter = jitter;
 }

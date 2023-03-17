@@ -1,3 +1,25 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 #include <cmath>
 
@@ -17,6 +39,7 @@ namespace donut::math
 				{ return data()[i]; } \
 			const T & operator [] (int i) const \
 				{ return data()[i]; } \
+            static constexpr uint const DIM = n; \
             vector() { } \
             vector(const T* v) \
                 { for(int i = 0; i < n; i++) data()[i] = v[i]; } \
@@ -36,11 +59,11 @@ namespace donut::math
         vector(T a) 
         { for (int i = 0; i < n; i++) m_data[i] = a; } 
 
-        inline T* data() { return m_data; }
-        inline const T* data() const { return m_data; }
+        T* data() { return m_data; }
+        const T* data() const { return m_data; }
 
         template<typename U> 
-        vector(const vector<U, n>& v)
+        explicit vector(const vector<U, n>& v)
         { for (int i = 0; i < n; i++) m_data[i] = static_cast<T>(v.m_data[i]); }
 
 		VECTOR_MEMBERS(T, n)
@@ -51,13 +74,13 @@ namespace donut::math
 	{
         T x, y;
 
-        inline T* data() { return &x; }
-        inline const T* data() const { return &x; }
+        T* data() { return &x; }
+        const T* data() const { return &x; }
 
         constexpr vector(T a) : x(a), y(a) { }
         constexpr vector(T _x, T _y) : x(_x), y(_y) { }
         template<typename U>
-        constexpr vector(const vector<U, 2>& v) : x(static_cast<T>(v.x)), y(static_cast<T>(v.y)) { }
+		explicit constexpr vector(const vector<U, 2>& v) : x(static_cast<T>(v.x)), y(static_cast<T>(v.y)) { }
         constexpr vector(const vector<T, 3>& v) : x(v.x), y(v.y) { }
         constexpr vector(const vector<T, 4>& v) : x(v.x), y(v.y) { }
         constexpr static vector zero() { return vector(static_cast<T>(0)); }
@@ -70,18 +93,18 @@ namespace donut::math
 	{
         T x, y, z;
 
-        inline T* data() { return &x; }
-        inline const T* data() const { return &x; }
+        T* data() { return &x; }
+        const T* data() const { return &x; }
 
-        inline vector<T, 2>& xy() { return *reinterpret_cast<vector<T, 2>*>(&x); }
-        inline const vector<T, 2>& xy() const { return *reinterpret_cast<const vector<T, 2>*>(&x); }
+        vector<T, 2>& xy() { return *reinterpret_cast<vector<T, 2>*>(&x); }
+        const vector<T, 2>& xy() const { return *reinterpret_cast<const vector<T, 2>*>(&x); }
 
         constexpr vector(T a) : x(a), y(a), z(a) { }
         constexpr vector(T _x, T _y, T _z) : x(_x), y(_y), z(_z) { }
         constexpr vector(const vector<T, 2>& xy, T _z) : x(xy.x), y(xy.y), z(_z) { }
         constexpr vector(const vector<T, 4>& v) : x(v.x), y(v.y), z(v.z) { }
         template<typename U>
-        constexpr vector(const vector<U, 3>& v) : x(static_cast<T>(v.x)), y(static_cast<T>(v.y)), z(static_cast<T>(v.z)) { }
+		explicit constexpr vector(const vector<U, 3>& v) : x(static_cast<T>(v.x)), y(static_cast<T>(v.y)), z(static_cast<T>(v.z)) { }
         constexpr static vector zero() { return vector(static_cast<T>(0)); }
 
 		VECTOR_MEMBERS(T, 3)
@@ -92,15 +115,15 @@ namespace donut::math
     {
         T x, y, z, w;
 
-        inline T* data() { return &x; }
-        inline const T* data() const { return &x; }
+        T* data() { return &x; }
+        const T* data() const { return &x; }
 
-        inline vector<T, 2>& xy() { return *reinterpret_cast<vector<T, 2>*>(&x); }
-        inline const vector<T, 2>& xy() const { return *reinterpret_cast<const vector<T, 2>*>(&x); }
-        inline vector<T, 2>& zw() { return *reinterpret_cast<vector<T, 2>*>(&z); }
-        inline const vector<T, 2>& zw() const { return *reinterpret_cast<const vector<T, 2>*>(&z); }
-        inline vector<T, 3>& xyz() { return *reinterpret_cast<vector<T, 3>*>(&x); }
-        inline const vector<T, 3>& xyz() const { return *reinterpret_cast<const vector<T, 3>*>(&x); }
+        vector<T, 2>& xy() { return *reinterpret_cast<vector<T, 2>*>(&x); }
+        const vector<T, 2>& xy() const { return *reinterpret_cast<const vector<T, 2>*>(&x); }
+        vector<T, 2>& zw() { return *reinterpret_cast<vector<T, 2>*>(&z); }
+        const vector<T, 2>& zw() const { return *reinterpret_cast<const vector<T, 2>*>(&z); }
+        vector<T, 3>& xyz() { return *reinterpret_cast<vector<T, 3>*>(&x); }
+        const vector<T, 3>& xyz() const { return *reinterpret_cast<const vector<T, 3>*>(&x); }
 
         constexpr vector(T a) : x(a), y(a), z(a), w(a) { }
         constexpr vector(T _x, T _y, T _z, T _w) : x(_x), y(_y), z(_z), w(_w) { }
@@ -108,7 +131,7 @@ namespace donut::math
         constexpr vector(const vector<T, 2>& xy, const vector<T, 2>& zw) : x(xy.x), y(xy.y), z(zw.x), w(zw.y) { }
         constexpr vector(const vector<T, 3>& xyz, T _w) : x(xyz.x), y(xyz.y), z(xyz.z), w(_w) { }
         template<typename U>
-        constexpr vector(const vector<U, 4>& v) : x(static_cast<T>(v.x)), y(static_cast<T>(v.y)), z(static_cast<T>(v.z)), w(static_cast<T>(v.w)) { }
+		explicit constexpr vector(const vector<U, 4>& v) : x(static_cast<T>(v.x)), y(static_cast<T>(v.y)), z(static_cast<T>(v.z)), w(static_cast<T>(v.w)) { }
         constexpr static vector zero() { return vector(static_cast<T>(0)); }
 
         VECTOR_MEMBERS(T, 4)
@@ -116,39 +139,15 @@ namespace donut::math
 
 #undef VECTOR_MEMBERS
     
-	// Concrete vectors, and their maker functions,
-	// for the most common types and dimensions
+	// Concrete vectors for the most common types and dimensions
 
 #define DEFINE_CONCRETE_VECTORS(type) \
 			typedef vector<type, 2> type##2; \
 			typedef vector<type, 3> type##3; \
-			typedef vector<type, 4> type##4; \
-			typedef vector<type, 2> const & type##2_arg; \
-			typedef vector<type, 3> const & type##3_arg; \
-			typedef vector<type, 4> const & type##4_arg; \
-			[[deprecated]] inline type##2 make##type##2(type x, type y) \
-				{ return type##2(x, y); } \
-			template <typename T> \
-			[[deprecated]] inline type##2 make##type##2(T a) \
-				{ return type##2(a); } \
-			[[deprecated]] inline type##3 make##type##3(type x, type y, type z) \
-				{ return type##3(x, y, z); } \
-			[[deprecated]] inline type##3 make##type##3(type##2_arg xy, type z) \
-				{ return type##3(xy, z); } \
-			template <typename T> \
-			[[deprecated]] inline type##3 make##type##3(T a) \
-				{ return vector<type, 3>(a); } \
-			[[deprecated]] inline type##4 make##type##4(type x, type y, type z, type w) \
-				{ return type##4(x, y, z, w); } \
-			[[deprecated]] inline type##4 make##type##4(type##2_arg xy, type z, type w) \
-				{ return type##4(xy, z, w); } \
-			[[deprecated]] inline type##4 make##type##4(type##3_arg xyz, type w) \
-				{ return type##4(xyz, w); } \
-			template <typename T> \
-			[[deprecated]] inline type##4 make##type##4(T a) \
-				{ return vector<type, 4>(a); }
+			typedef vector<type, 4> type##4;
 
 	DEFINE_CONCRETE_VECTORS(float);
+	DEFINE_CONCRETE_VECTORS(double);
 	DEFINE_CONCRETE_VECTORS(int);
 	DEFINE_CONCRETE_VECTORS(uint);
 	DEFINE_CONCRETE_VECTORS(bool);
@@ -423,15 +422,105 @@ namespace donut::math
     }
 
     template <typename T, int n>
-    constexpr vector<T, n> max(vector<T, n> const & a, vector<T, n> const & b)
+    constexpr vector<T, n> max(vector<T, n> const& a, vector<T, n> const& b)
     {
         return select(a < b, b, a);
+    }
+
+    template <typename T>
+    constexpr vector<T, 2> min(vector<T, 2> const& a, vector<T, 2> const& b)
+    {
+        vector<T, 2> result;
+        result.x = (a.x < b.x) ? a.x : b.x;
+        result.y = (a.y < b.y) ? a.y : b.y;
+        return result;
+    }
+
+    template <typename T>
+    constexpr vector<T, 3> min(vector<T, 3> const& a, vector<T, 3> const& b)
+    {
+        vector<T, 3> result;
+        result.x = (a.x < b.x) ? a.x : b.x;
+        result.y = (a.y < b.y) ? a.y : b.y;
+        result.z = (a.z < b.z) ? a.z : b.z;
+        return result;
+    }
+
+    template <typename T>
+    constexpr vector<T, 4> min(vector<T, 4> const& a, vector<T, 4> const& b)
+    {
+        vector<T, 4> result;
+        result.x = (a.x < b.x) ? a.x : b.x;
+        result.y = (a.y < b.y) ? a.y : b.y;
+        result.z = (a.z < b.z) ? a.z : b.z;
+        result.w = (a.w < b.w) ? a.w : b.w;
+        return result;
+    }
+
+    template <typename T>
+    constexpr vector<T, 2> max(vector<T, 2> const& a, vector<T, 2> const& b)
+    {
+        vector<T, 2> result;
+        result.x = (a.x > b.x) ? a.x : b.x;
+        result.y = (a.y > b.y) ? a.y : b.y;
+        return result;
+    }
+
+    template <typename T>
+    constexpr vector<T, 3> max(vector<T, 3> const& a, vector<T, 3> const& b)
+    {
+        vector<T, 3> result;
+        result.x = (a.x > b.x) ? a.x : b.x;
+        result.y = (a.y > b.y) ? a.y : b.y;
+        result.z = (a.z > b.z) ? a.z : b.z;
+        return result;
+    }
+
+    template <typename T>
+    constexpr vector<T, 4> max(vector<T, 4> const& a, vector<T, 4> const& b)
+    {
+        vector<T, 4> result;
+        result.x = (a.x > b.x) ? a.x : b.x;
+        result.y = (a.y > b.y) ? a.y : b.y;
+        result.z = (a.z > b.z) ? a.z : b.z;
+        result.w = (a.w > b.w) ? a.w : b.w;
+        return result;
     }
 
     template <typename T, int n> 
     constexpr vector<T, n> abs(vector<T, n> const & a)
     {
         return select(a < T(0), -a, a);
+    }
+
+    template <typename T>
+    constexpr vector<T, 2> abs(vector<T, 2> const& a)
+    {
+        vector<T, 2> result;
+        result.x = std::abs(a.x);
+        result.y = std::abs(a.y);
+        return result;
+    }
+
+    template <typename T>
+    constexpr vector<T, 3> abs(vector<T, 3> const& a)
+    {
+        vector<T, 3> result;
+        result.x = std::abs(a.x);
+        result.y = std::abs(a.y);
+        result.z = std::abs(a.z);
+        return result;
+    }
+
+    template <typename T>
+    constexpr vector<T, 4> abs(vector<T, 4> const& a)
+    {
+        vector<T, 4> result;
+        result.x = std::abs(a.x);
+        result.y = std::abs(a.y);
+        result.z = std::abs(a.z);
+        result.w = std::abs(a.w);
+        return result;
     }
 
 	template <typename T, int n>
@@ -468,11 +557,11 @@ namespace donut::math
         return deg * (PI_f / 180.f);
     }
 
-    float3 sphericalToCartesian(radians_f azimuth, radians_f elevation, float distance);
-    float3 sphericalDegreesToCartesian(degrees_f azimuth, degrees_f elevation, float distance);
+    float3 sphericalToCartesian(float azimuth, float elevation, float distance);
+    float3 sphericalDegreesToCartesian(float azimuth, float elevation, float distance);
 
-    void cartesianToSpherical(const float3& v, radians_f& azimuth, radians_f& elevation, float& distance);
-    void cartesianToSphericalDegrees(const float3& v, degrees_f& azimuth, degrees_f& elevation, float& distance);
+    void cartesianToSpherical(const float3& v, float& azimuth, float& elevation, float& distance);
+    void cartesianToSphericalDegrees(const float3& v, float& azimuth, float& elevation, float& distance);
 
     template<int n> uint vectorToSnorm8(const vector<float, n>& v); // undefined
     template<> uint vectorToSnorm8<2>(const float2& v);

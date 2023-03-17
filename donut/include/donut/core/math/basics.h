@@ -1,3 +1,25 @@
+/*
+* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
 #pragma once
 #include <float.h>
 #include <limits>
@@ -16,15 +38,9 @@ namespace donut::math
 {
 	// "uint" is a lot shorter than "unsigned int"
 	typedef unsigned int uint;
-
-    // descriptive types for angles
-    typedef float radians_f;
-    typedef float degrees_f;
-    typedef double radians_d;
-    typedef double degrees_d;
-
-    constexpr radians_f PI_f = 3.141592654f;
-    constexpr radians_d PI_d = 3.14159265358979323;
+	
+    constexpr float PI_f = 3.141592654f;
+    constexpr double PI_d = 3.14159265358979323;
 
 	// Convenient float constants
     constexpr float epsilon = 1e-6f;		// A reasonable general-purpose epsilon
@@ -102,10 +118,10 @@ namespace donut::math
 	inline T * advanceBytes(T * ptr, int bytes)
 		{ return (T *)((char *)ptr + bytes); }
 
-    inline degrees_f degrees(radians_f rad) { return rad * (180.f / PI_f); }
-    inline radians_f radians(degrees_f deg) { return deg * (PI_f / 180.f); }
-    inline degrees_d degrees(radians_d rad) { return rad * (180.0 / PI_d); }
-    inline radians_d radians(degrees_d deg) { return deg * (PI_d / 180.0); }
+    inline float degrees(float rad) { return rad * (180.f / PI_f); }
+    inline float radians(float deg) { return deg * (PI_f / 180.f); }
+    inline double degrees(double rad) { return rad * (180.0 / PI_d); }
+    inline double radians(double deg) { return deg * (PI_d / 180.0); }
 
     template<typename T>
     constexpr T insertBits(T value, int width, int offset)

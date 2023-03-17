@@ -1,93 +1,77 @@
-if (NOT DEFINED DEPENDENCIES_ROOT)
-    message(FATAL_ERROR "Packman package root not found --- please run packman or set PM_PACKAGES_ROOT")
-endif()
+#
+# Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+# and/or sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
 
-include(imgui.cmake)
-include(jsoncpp.cmake)
-include(stb.cmake)
 
-# Required DXC dependencies
-if (WIN32)
-    set(dxc_package_version "win32-5bf6dd18")
-else()
-    set(dxc_package_version "linux-x86_64-7f7a2f1c")
-endif()
-include(dxc.cmake)
-STRING(REGEX REPLACE "\\\\" "/" __dxc_package_path ${__dxc_package_path})
-install(DIRECTORY ${__dxc_package_path} DESTINATION "donut/thirdparty/chk/dxc" USE_SOURCE_PERMISSIONS PATTERN "*.pdb" EXCLUDE)
-
-option(GLFW_BUILD_EXAMPLES "" OFF)
-option(GLFW_BUILD_TESTS "" OFF)
-option(GLFW_BUILD_DOCS "" OFF)
-option(GLFW_INSTALL "" OFF)
-add_subdirectory(glfw)
-
+# Required dependencies
 set(third_party_folder "Third-Party Libraries")
-set_target_properties(glfw PROPERTIES FOLDER ${third_party_folder})
-set_target_properties(imgui PROPERTIES FOLDER ${third_party_folder})
-set_target_properties(jsoncpp_lib_static PROPERTIES FOLDER ${third_party_folder})
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+if (DONUT_WITH_NVRHI AND NOT TARGET imgui)
+    include(imgui.cmake)
+    set_target_properties(imgui PROPERTIES FOLDER ${third_party_folder})
+endif()
+
+if (NOT TARGET jsoncpp_static)
+    include(jsoncpp.cmake)
+    set_target_properties(jsoncpp_static PROPERTIES FOLDER ${third_party_folder})
+endif()
+
+if (NOT TARGET stb)
+    add_library(stb INTERFACE)
+    target_include_directories(stb INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/stb)
+endif()
+
+if (NOT TARGET cgltf)
+    add_library(cgltf INTERFACE)
+    target_include_directories(cgltf INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cgltf)
+endif()
 
 # Optional dependencies
 
-if(DONUT_WITH_ASSIMP)
-if (WIN32)
-    set(assimp_package_version "4.1.0-win32-x64")
-else()
-    set(assimp_package_version "4.1.0-linux-x86_64")
-endif()
-    include(assimp.cmake)
-    STRING(REGEX REPLACE "\\\\" "/" __assimp_package_path ${__assimp_package_path})
-    install(DIRECTORY ${__assimp_package_path} DESTINATION "donut/thirdparty/chk/assimp" USE_SOURCE_PERMISSIONS)
+if (DONUT_WITH_TINYEXR AND NOT TARGET tinyexr)
+    add_library(tinyexr INTERFACE)
+    target_include_directories(tinyexr INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tinyexr)
 endif()
 
-if(DONUT_WITH_HBAO_PLUS AND WIN32)
-    set(hbao_plus_package_version "p4sw-4.0.0.24284062-win32-x64")
-    include(hbao_plus.cmake)
-    STRING(REGEX REPLACE "\\\\" "/" __hbao_plus_package_path ${__hbao_plus_package_path})
-    install(DIRECTORY ${__hbao_plus_package_path} DESTINATION "donut/thirdparty/chk/hbao_plus")
+if (DONUT_WITH_TASKFLOW AND NOT TARGET taskflow)
+    add_library(taskflow INTERFACE)
+    target_include_directories(taskflow INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/taskflow)
 endif()
 
-if(DONUT_WITH_LZ4)
+if (DONUT_WITH_NVRHI AND NOT TARGET glfw)
+    option(GLFW_BUILD_EXAMPLES "" OFF)
+    option(GLFW_BUILD_TESTS "" OFF)
+    option(GLFW_BUILD_DOCS "" OFF)
+    option(GLFW_INSTALL "" OFF)
+    add_subdirectory(glfw)
+    set_target_properties(glfw PROPERTIES FOLDER ${third_party_folder})
+endif()
+
+if (DONUT_WITH_LZ4 AND NOT TARGET lz4)
     include(lz4.cmake)
     set_target_properties(lz4 PROPERTIES FOLDER ${third_party_folder})
-
-    install(DIRECTORY lz4 DESTINATION "donut/thirdparty" USE_SOURCE_PERMISSIONS)
 endif()
 
-if(DONUT_WITH_SL)
-    include(sl.cmake)
+if (DONUT_WITH_MINIZ AND NOT TARGET miniz)
+    add_subdirectory(miniz)
+    set_target_properties(miniz PROPERTIES FOLDER ${third_party_folder})
 endif()
-
-if(DONUT_WITH_NVAPI AND WIN32)
-    set(nvapi_package_version "donut-p4sw-24219035-win32-x64")
-    include(nvapi.cmake)
-    STRING(REGEX REPLACE "\\\\" "/" __nvapi_package_path ${__nvapi_package_path})
-    install(DIRECTORY ${__nvapi_package_path} DESTINATION "donut/thirdparty/chk/nvapi")
-endif()
-
-if(DONUT_WITH_RTAO)
-    set(rtao_package_version "1.1")
-    include(rtao.cmake)
-    STRING(REGEX REPLACE "\\\\" "/" rtao_package_path ${rtao_package_path})
-    install(DIRECTORY ${rtao_package_path} DESTINATION "donut/thirdparty/chk/rtao" USE_SOURCE_PERMISSIONS)
-endif()
-
-if(DONUT_WITH_RT_REFLECTIONS)
-    set(rtreflections_package_version "1.103")
-    include(rtreflections.cmake)
-    STRING(REGEX REPLACE "\\\\" "/" rtreflections_package_path ${rtreflections_package_path})
-    install(DIRECTORY ${rtreflections_package_path} DESTINATION "donut/thirdparty/chk/gfsdk_rtreflections" USE_SOURCE_PERMISSIONS)
-endif()
-
-if(DONUT_WITH_SQLITE)
-    add_subdirectory(sqlite)
-    set_target_properties(sqlite PROPERTIES FOLDER ${third_party_folder})
-    install(DIRECTORY sqlite DESTINATION "donut/thirdparty" USE_SOURCE_PERMISSIONS)
-endif()
-
-file(GLOB CMAKE_FILES *.cmake)
-install(FILES CMakeLists.txt;${CMAKE_FILES} DESTINATION "donut/thirdparty")
-install(DIRECTORY glfw;imgui;jsoncpp;stb DESTINATION "donut/thirdparty")
-STRING(REGEX REPLACE "/" "\\\\\\\\" PACKMAN_DEPENDENCIES_PATH "${CMAKE_INSTALL_PREFIX}donut/thirdparty")
-install(CODE "execute_process(COMMAND cmd /c ${PROJECT_SOURCE_DIR}/packman/remove_packman_sha1s.bat ${PACKMAN_DEPENDENCIES_PATH})")
-#todo remove packman sha1s

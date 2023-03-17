@@ -23,6 +23,8 @@
 //    distribution.
 //
 //========================================================================
+// It is fine to use C99 in this file because it will not be built with VS
+//========================================================================
 
 #include "internal.h"
 
@@ -30,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <math.h>
 
 
 static void outputHandleGeometry(void* data,
@@ -70,7 +73,7 @@ static void outputHandleMode(void* data,
     mode.redBits = 8;
     mode.greenBits = 8;
     mode.blueBits = 8;
-    mode.refreshRate = refresh / 1000;
+    mode.refreshRate = (int) round(refresh / 1000.0);
 
     monitor->modeCount++;
     monitor->modes =
@@ -84,6 +87,14 @@ static void outputHandleMode(void* data,
 static void outputHandleDone(void* data, struct wl_output* output)
 {
     struct _GLFWmonitor *monitor = data;
+
+    if (monitor->widthMM <= 0 || monitor->heightMM <= 0)
+    {
+        // If Wayland does not provide a physical size, assume the default 96 DPI
+        const GLFWvidmode* mode = &monitor->modes[monitor->wl.currentMode];
+        monitor->widthMM  = (int) (mode->width * 25.4f / 96.f);
+        monitor->heightMM = (int) (mode->height * 25.4f / 96.f);
+    }
 
     _glfwInputMonitor(monitor, GLFW_CONNECTED, _GLFW_INSERT_LAST);
 }
@@ -169,6 +180,20 @@ void _glfwPlatformGetMonitorContentScale(_GLFWmonitor* monitor,
         *yscale = (float) monitor->wl.scale;
 }
 
+void _glfwPlatformGetMonitorWorkarea(_GLFWmonitor* monitor,
+                                     int* xpos, int* ypos,
+                                     int* width, int* height)
+{
+    if (xpos)
+        *xpos = monitor->wl.x;
+    if (ypos)
+        *ypos = monitor->wl.y;
+    if (width)
+        *width = monitor->modes[monitor->wl.currentMode].width;
+    if (height)
+        *height = monitor->modes[monitor->wl.currentMode].height;
+}
+
 GLFWvidmode* _glfwPlatformGetVideoModes(_GLFWmonitor* monitor, int* found)
 {
     *found = monitor->modeCount;
@@ -180,19 +205,18 @@ void _glfwPlatformGetVideoMode(_GLFWmonitor* monitor, GLFWvidmode* mode)
     *mode = monitor->modes[monitor->wl.currentMode];
 }
 
-void _glfwPlatformGetGammaRamp(_GLFWmonitor* monitor, GLFWgammaramp* ramp)
+GLFWbool _glfwPlatformGetGammaRamp(_GLFWmonitor* monitor, GLFWgammaramp* ramp)
 {
-    // TODO
     _glfwInputError(GLFW_PLATFORM_ERROR,
-                    "Wayland: Gamma ramp getting not supported yet");
+                    "Wayland: Gamma ramp access is not available");
+    return GLFW_FALSE;
 }
 
 void _glfwPlatformSetGammaRamp(_GLFWmonitor* monitor,
                                const GLFWgammaramp* ramp)
 {
-    // TODO
     _glfwInputError(GLFW_PLATFORM_ERROR,
-                    "Wayland: Gamma ramp setting not supported yet");
+                    "Wayland: Gamma ramp access is not available");
 }
 
 

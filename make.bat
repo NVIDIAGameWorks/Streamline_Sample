@@ -1,0 +1,1 @@
+cmake %* -S . -B _build
