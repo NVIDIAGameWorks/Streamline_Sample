@@ -570,7 +570,14 @@ bool DeviceManagerOverride_VK::pickPhysicalDevice()
     {
         VkPhysicalDevice* dv = nullptr;
         SLWrapper::Get().FindAdapter((void*&)dv, &discreteGPUs);
-        m_VulkanPhysicalDevice = *dv;
+        if (dv)
+        {
+            m_VulkanPhysicalDevice = *dv;
+        }
+        else
+        {
+            m_VulkanPhysicalDevice = discreteGPUs[0];
+        }
 
         return true;
     }
@@ -579,7 +586,13 @@ bool DeviceManagerOverride_VK::pickPhysicalDevice()
     {
         VkPhysicalDevice* dv = nullptr;
         SLWrapper::Get().FindAdapter((void*&)dv, &otherGPUs);
-        m_VulkanPhysicalDevice = *dv;
+        if (dv)
+        {
+            m_VulkanPhysicalDevice = *dv;
+        else
+        {
+            m_VulkanPhysicalDevice = otherGPUs[0];
+        }
         return true;
     }
 
