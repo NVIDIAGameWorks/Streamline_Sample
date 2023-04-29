@@ -576,8 +576,7 @@ bool DeviceManagerOverride_VK::pickPhysicalDevice()
         }
         else
         {
-            auto& devicePtr = discreteGPUs[0];
-            m_VulkanPhysicalDevice = devicePtr;
+            m_VulkanPhysicalDevice = discreteGPUs[0];
         }
 
         return true;
@@ -592,8 +591,7 @@ bool DeviceManagerOverride_VK::pickPhysicalDevice()
             m_VulkanPhysicalDevice = *dv;
         else
         {
-            auto& devicePtr = otherGPUs[0];
-            m_VulkanPhysicalDevice = devicePtr;
+            m_VulkanPhysicalDevice = otherGPUs[0];
         }
         return true;
     }
