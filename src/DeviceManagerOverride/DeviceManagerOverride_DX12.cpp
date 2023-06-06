@@ -82,6 +82,8 @@ class DeviceManagerOverride_DX12 : public donut::app::DeviceManager
     static constexpr int a = sizeof(RefCountPtr<IDXGIFactory2>);
 
     // STREAMLINE
+    bool                                        m_UseProxySwapchain = false;
+
     RefCountPtr<ID3D12Device>                   m_Device_proxy;
     RefCountPtr<IDXGISwapChain3>                m_SwapChain_proxy;
     RefCountPtr<IDXGIFactory2>                  m_Factory_proxy;
@@ -146,6 +148,7 @@ protected:
 private:
     bool CreateRenderTargets();
     void ReleaseRenderTargets();
+    void waitForQueue();
 };
 
 static bool IsNvDeviceID(UINT id)
@@ -472,10 +475,10 @@ bool DeviceManagerOverride_DX12::CreateDeviceAndSwapChain()
     // STREAMLINE
 
     // Get the proxy swapchain using the intercepted API 
-    RefCountPtr<IDXGISwapChain1> pSwapChain1_proxy;
-    hr = m_Factory_proxy->CreateSwapChainForHwnd(m_GraphicsQueue, m_hWnd, &m_SwapChainDesc, &m_FullScreenDesc, nullptr, &pSwapChain1_proxy);
+    RefCountPtr<IDXGISwapChain1> pSwapChain1_base;
+    hr = m_Factory_proxy->CreateSwapChainForHwnd(m_GraphicsQueue, m_hWnd, &m_SwapChainDesc, &m_FullScreenDesc, nullptr, &pSwapChain1_base);
     HR_RETURN(hr);
-	hr = pSwapChain1_proxy->QueryInterface(IID_PPV_ARGS(&m_SwapChain_proxy));
+	hr = pSwapChain1_base->QueryInterface(IID_PPV_ARGS(&m_SwapChain_proxy));
     HR_RETURN(hr);
 
     // Get the native device by requesting it explicitly
@@ -511,6 +514,8 @@ bool DeviceManagerOverride_DX12::CreateDeviceAndSwapChain()
 
 void DeviceManagerOverride_DX12::DestroyDeviceAndSwapChain()
 {
+    waitForQueue();
+
     m_RhiSwapChainBuffers.clear();
     m_RendererString.clear();
 
@@ -545,14 +550,22 @@ void DeviceManagerOverride_DX12::DestroyDeviceAndSwapChain()
     }
 #endif
 
+    int a = 0;
+
     m_FrameFence = nullptr;
+
+    m_SwapChain_native->Release();
     m_SwapChain_proxy = nullptr;
     m_SwapChain_native = nullptr;
+
     m_GraphicsQueue = nullptr;
     m_ComputeQueue = nullptr;
     m_CopyQueue = nullptr;
+
     m_Device_proxy = nullptr;
     m_Device_native = nullptr;
+    m_Factory_proxy = nullptr;
+
     m_DxgiAdapter = nullptr;
 
 #ifdef AGS_ENABLE
@@ -589,6 +602,14 @@ bool DeviceManagerOverride_DX12::CreateRenderTargets()
     return true;
 }
 
+void DeviceManagerOverride_DX12::waitForQueue() {
+    auto syncValue = ++m_FrameCount;
+    m_FrameFence->SetEventOnCompletion(syncValue, m_FrameFenceEvents[0]);
+    m_GraphicsQueue->Signal(m_FrameFence, syncValue);
+    WaitForSingleObject(m_FrameFenceEvents[0], INFINITE);
+}
+
+
 void DeviceManagerOverride_DX12::ReleaseRenderTargets()
 {
     // Make sure that all frames have finished rendering
@@ -616,6 +637,8 @@ void DeviceManagerOverride_DX12::ResizeSwapChain()
     if (!m_SwapChain_proxy)
         return;
 
+    waitForQueue();
+
     // STREAMLINE: hook function using proxy api object
     const HRESULT hr = m_SwapChain_proxy->ResizeBuffers(m_DeviceParams.swapChainBufferCount,
                                             m_DeviceParams.backBufferWidth,
@@ -637,32 +660,94 @@ void DeviceManagerOverride_DX12::ResizeSwapChain()
 
 void DeviceManagerOverride_DX12::BeginFrame()
 {
-    DXGI_SWAP_CHAIN_DESC1 newSwapChainDesc;
-    DXGI_SWAP_CHAIN_FULLSCREEN_DESC newFullScreenDesc;
-    if (SUCCEEDED(m_SwapChain_native->GetDesc1(&newSwapChainDesc)) && SUCCEEDED(m_SwapChain_native->GetFullscreenDesc(&newFullScreenDesc)))
-    {
-        if (m_FullScreenDesc.Windowed != newFullScreenDesc.Windowed)
-        {
-            BackBufferResizing();
-            
-            m_FullScreenDesc = newFullScreenDesc;
-            m_SwapChainDesc = newSwapChainDesc;
+
+#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+    bool turn_on;
+
+    // STREAMLINE
+    if (SLWrapper::Get().Get_DLSSG_SwapChainRecreation(turn_on)) {
+
+        waitForQueue();
+
+        SLWrapper::Get().CleanupDLSSG();
+
+        // Get new sizes
+        DXGI_SWAP_CHAIN_DESC1 newSwapChainDesc;
+        if (SUCCEEDED(m_SwapChain_native->GetDesc1(&newSwapChainDesc))) {
+            m_SwapChainDesc.Width = newSwapChainDesc.Width;
+            m_SwapChainDesc.Height = newSwapChainDesc.Height;
             m_DeviceParams.backBufferWidth = newSwapChainDesc.Width;
             m_DeviceParams.backBufferHeight = newSwapChainDesc.Height;
+        }
 
-            if(newFullScreenDesc.Windowed)
-                glfwSetWindowMonitor(m_Window, nullptr, 50, 50, newSwapChainDesc.Width, newSwapChainDesc.Height, 0);
+        BackBufferResizing();
 
-            ResizeSwapChain();
-            BackBufferResized();
+        // Delete swapchain and resources
+        m_SwapChain_proxy->SetFullscreenState(false, nullptr);
+        ReleaseRenderTargets();
+
+        m_SwapChain_native->Release();
+        m_SwapChain_proxy = nullptr;
+        m_SwapChain_native = nullptr;
+
+        // If we turn off dlssg, then unload dlssg featuree
+        if (turn_on) 
+            SLWrapper::Get().FeatureLoad(sl::kFeatureDLSS_G, true);
+        else {
+            SLWrapper::Get().FeatureLoad(sl::kFeatureDLSS_G, false);
+        }
+
+        m_UseProxySwapchain = turn_on;
+
+        // Recreate Swapchain and resources 
+        RefCountPtr<IDXGISwapChain1> pSwapChain1_base;
+        auto hr = m_Factory_proxy->CreateSwapChainForHwnd(m_GraphicsQueue, m_hWnd, &m_SwapChainDesc, &m_FullScreenDesc, nullptr, &pSwapChain1_base);
+        if (hr != S_OK)  donut::log::fatal("CreateSwapChainForHwnd failed");
+        hr = pSwapChain1_base->QueryInterface(IID_PPV_ARGS(&m_SwapChain_proxy));
+        if (hr != S_OK)  donut::log::fatal("QueryInterface failed");
+        SLWrapper::Get().ProxyToNative(m_SwapChain_proxy, (void**)&m_SwapChain_native);
+
+        if (!CreateRenderTargets()) 
+            donut::log::fatal("CreateRenderTarget failed");
+
+        BackBufferResized();
+
+        // Reload DLSSG
+        SLWrapper::Get().FeatureLoad(sl::kFeatureDLSS_G, true); 
+        SLWrapper::Get().Quiet_DLSSG_SwapChainRecreation();
+
+    }
+    else
+#endif DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+    {
+        DXGI_SWAP_CHAIN_DESC1 newSwapChainDesc;
+        DXGI_SWAP_CHAIN_FULLSCREEN_DESC newFullScreenDesc;
+        if (SUCCEEDED(m_SwapChain_native->GetDesc1(&newSwapChainDesc)) && SUCCEEDED(m_SwapChain_native->GetFullscreenDesc(&newFullScreenDesc)))
+        {
+            if (m_FullScreenDesc.Windowed != newFullScreenDesc.Windowed)
+            {
+
+                waitForQueue();
+
+                BackBufferResizing();
+
+                m_FullScreenDesc = newFullScreenDesc;
+                m_SwapChainDesc = newSwapChainDesc;
+                m_DeviceParams.backBufferWidth = newSwapChainDesc.Width;
+                m_DeviceParams.backBufferHeight = newSwapChainDesc.Height;
+
+                if (newFullScreenDesc.Windowed)
+                    glfwSetWindowMonitor(m_Window, nullptr, 50, 50, newSwapChainDesc.Width, newSwapChainDesc.Height, 0);
+
+                ResizeSwapChain();
+                BackBufferResized();
+            }
+
         }
 
     }
-
     // STREAMLINE: hook function using proxy api object
     auto bufferIndex = m_SwapChain_proxy->GetCurrentBackBufferIndex();
-
-    WaitForSingleObject(m_FrameFenceEvents[bufferIndex], INFINITE);
 }
 
 nvrhi::ITexture* DeviceManagerOverride_DX12::GetCurrentBackBuffer()

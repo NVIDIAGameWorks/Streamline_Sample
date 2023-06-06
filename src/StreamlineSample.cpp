@@ -128,15 +128,23 @@ StreamlineSample::StreamlineSample(DeviceManager* deviceManager, UIData& ui, con
     deviceManager->m_callbacks.beforePresent = SLWrapper::ReflexCallback_PresentStart;
     deviceManager->m_callbacks.afterPresent = SLWrapper::ReflexCallback_PresentEnd;
 
-    if (m_ScriptingConfig.Reflex_mode != -1 && SLWrapper::Get().GetReflexAvailable())
-        m_ui.REFLEX_Mode = m_ScriptingConfig.Reflex_mode;
-    if (m_ScriptingConfig.Reflex_fpsCap != -1 && SLWrapper::Get().GetReflexAvailable())
-        m_ui.REFLEX_CapedFPS = m_ScriptingConfig.Reflex_fpsCap;
-    if (m_ScriptingConfig.DLSS_mode != -1 && SLWrapper::Get().GetDLSSAvailable()) {
-        m_ui.AAMode = AntiAliasingMode::DLSS;
-        m_ui.DLSS_Mode = static_cast<sl::DLSSMode>(m_ScriptingConfig.DLSS_mode);
+    if (m_ScriptingConfig.Reflex_mode != -1 && SLWrapper::Get().GetReflexAvailable()) {
+        static constexpr std::array<int, 3> ValidReflexIndices{ 0,1,2 };
+        if (std::find(ValidReflexIndices.begin(), ValidReflexIndices.end(), m_ScriptingConfig.Reflex_mode) != ValidReflexIndices.end()) { // CHECK IF THE DLSS MODE IS VALID
+            m_ui.REFLEX_Mode = m_ScriptingConfig.Reflex_mode;
+        }
     }
 
+    if (m_ScriptingConfig.Reflex_fpsCap > 0 && SLWrapper::Get().GetReflexAvailable())
+        m_ui.REFLEX_CapedFPS = m_ScriptingConfig.Reflex_fpsCap;
+
+    if (m_ScriptingConfig.DLSS_mode != -1 && SLWrapper::Get().GetDLSSAvailable()) {
+        static constexpr std::array<int, 6> ValidDLLSIndices{ 0,1,2,3,4,6 };
+        if (std::find(ValidDLLSIndices.begin(), ValidDLLSIndices.end(), m_ScriptingConfig.DLSS_mode) != ValidDLLSIndices.end()) { // CHECK IF THE DLSS MODE IS VALID
+            m_ui.AAMode = AntiAliasingMode::DLSS;
+            m_ui.DLSS_Mode = static_cast<sl::DLSSMode>(m_ScriptingConfig.DLSS_mode);
+        }
+    }
     m_ui.DLSSPresetsReset();
 
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
@@ -308,8 +316,10 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
     // DLSS-G Setup
 
     // If DLSS-G has been turned off, then we tell tell SL to clean it up expressly 
-    if (SLWrapper::Get().GetDLSSGLastEnable() && m_ui.DLSSG_mode == sl::DLSSGMode::eOff) {
-        SLWrapper::Get().CleanupDLSSG();
+    bool shouldbeLoaded;
+    SLWrapper::Get().Get_DLSSG_SwapChainRecreation(shouldbeLoaded);
+    if ((shouldbeLoaded == true) != (m_ui.DLSSG_mode == sl::DLSSGMode::eOn)) {
+        SLWrapper::Get().Set_DLSSG_SwapChainRecreation(m_ui.DLSSG_mode == sl::DLSSGMode::eOn);
     }
 
     // This is where DLSS-G is toggled On and Off (using dlssgConst.mode) and where we set DLSS-G parameters.  
@@ -415,12 +425,14 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
 
         if (m_ui.DLSSPresetsAnyNonDefault())
         {
-            dlssConstants.dlaaPreset = m_ui.DLSS_presets[static_cast<int>(sl::DLSSMode::eUltraQuality)];
+            dlssConstants.dlaaPreset = m_ui.DLSS_presets[static_cast<int>(sl::DLSSMode::eDLAA)];
             dlssConstants.qualityPreset = m_ui.DLSS_presets[static_cast<int>(sl::DLSSMode::eMaxQuality)];
             dlssConstants.balancedPreset = m_ui.DLSS_presets[static_cast<int>(sl::DLSSMode::eBalanced)];
             dlssConstants.performancePreset = m_ui.DLSS_presets[static_cast<int>(sl::DLSSMode::eMaxPerformance)];
             dlssConstants.ultraPerformancePreset = m_ui.DLSS_presets[static_cast<int>(sl::DLSSMode::eUltraPerformance)];
         }
+
+        dlssConstants.useAutoExposure = sl::Boolean::eFalse;
 
         // Changing presets requires a restart of DLSS
         if (m_ui.DLSSPresetsChanged())

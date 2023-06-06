@@ -238,29 +238,15 @@ bool SLWrapper::Initialize_preDevice(nvrhi::GraphicsAPI api, const bool& checkSi
         return false;
     }
 
-    // Hook up all of the functions exported by the SL Interposer Library
-    slInit = (PFun_slInit*)GetProcAddress(interposer, "slInit");
-    slShutdown = (PFun_slShutdown*)GetProcAddress(interposer, "slShutdown");
-    slIsFeatureSupported = (PFun_slIsFeatureSupported*)GetProcAddress(interposer, "slIsFeatureSupported");
-    slIsFeatureLoaded = (PFun_slIsFeatureLoaded*)GetProcAddress(interposer, "slIsFeatureLoaded");
-    slSetFeatureLoaded = (PFun_slSetFeatureLoaded*)GetProcAddress(interposer, "slSetFeatureLoaded");
-    slEvaluateFeature = (PFun_slEvaluateFeature*)GetProcAddress(interposer, "slEvaluateFeature");
-    slAllocateResources = (PFun_slAllocateResources*)GetProcAddress(interposer, "slAllocateResources");
-    slFreeResources = (PFun_slFreeResources*)GetProcAddress(interposer, "slFreeResources");
-    slSetTag = (PFun_slSetTag*)GetProcAddress(interposer, "slSetTag");
-    slGetFeatureRequirements = (PFun_slGetFeatureRequirements*)GetProcAddress(interposer, "slGetFeatureRequirements");
-    slGetFeatureVersion = (PFun_slGetFeatureVersion*)GetProcAddress(interposer, "slGetFeatureVersion");
-    slUpgradeInterface = (PFun_slUpgradeInterface*)GetProcAddress(interposer, "slUpgradeInterface");
-    slSetConstants = (PFun_slSetConstants*)GetProcAddress(interposer, "slSetConstants");
-    slGetNativeInterface = (PFun_slGetNativeInterface*)GetProcAddress(interposer, "slGetNativeInterface");
-    slGetFeatureFunction = (PFun_slGetFeatureFunction*)GetProcAddress(interposer, "slGetFeatureFunction");
-    slGetNewFrameToken = (PFun_slGetNewFrameToken*)GetProcAddress(interposer, "slGetNewFrameToken");
-    slSetD3DDevice = (PFun_slSetD3DDevice*)GetProcAddress(interposer, "slSetD3DDevice");
-
     m_sl_initialised = successCheck(slInit(pref, SDK_VERSION), "slInit");
     if (!m_sl_initialised) {
         log::error("Failed to initialse SL.");
         return false;
+    }
+
+    // turn off dlssg
+    if (api == nvrhi::GraphicsAPI::D3D12) {
+        slSetFeatureLoaded(sl::kFeatureDLSS_G, false);
     }
 
     return true;
@@ -268,24 +254,6 @@ bool SLWrapper::Initialize_preDevice(nvrhi::GraphicsAPI api, const bool& checkSi
 
 bool SLWrapper::Initialize_postDevice()
 {
-
-    // Hook up all of the feature functions using the sl function slGetFeatureFunction 
-    slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", (void*&)slDLSSGetOptimalSettings);
-    slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetState", (void*&)slDLSSGetState);
-    slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", (void*&)slDLSSSetOptions);
-
-    slGetFeatureFunction(sl::kFeatureNIS, "slNISSetOptions", (void*&)slNISSetOptions);
-    slGetFeatureFunction(sl::kFeatureNIS, "slNISGetState", (void*&)slNISGetState);
-
-    slGetFeatureFunction(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
-    slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetMarker", (void*&)slReflexSetMarker);
-    slGetFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
-    slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
-
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-    slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", (void*&)slDLSSGGetState);
-    slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)slDLSSGSetOptions);
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
 
     // We set reflex consts to a default config. This can be changed at runtime in the UI.
     auto reflexConst = sl::ReflexOptions{};
@@ -487,6 +455,7 @@ void SLWrapper::UpdateFeatureAvailable(donut::app::DeviceManager* deviceManager)
     }
 #endif
 
+
     // Check if features are fully functional (2nd call of slIsFeatureSupported onwards)
 
     m_dlss_available = successCheck(slIsFeatureSupported(sl::kFeatureDLSS, adapterInfo), "slIsFeatureSupported_DLSS");
@@ -506,6 +475,24 @@ void SLWrapper::UpdateFeatureAvailable(donut::app::DeviceManager* deviceManager)
     if (m_dlssg_available) log::info("DLSS-G is supported on this system.");
     else log::warning("DLSS-G is not fully functional on this system.");
 #endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
+
+    // We do not leverage the outcome of in the sample, however this is how it would be implemented.
+
+    sl::FeatureRequirements dlss_requirements;
+    slGetFeatureRequirements(sl::kFeatureDLSS, dlss_requirements);
+
+    sl::FeatureRequirements reflex_requirements;
+    slGetFeatureRequirements(sl::kFeatureDLSS, reflex_requirements);
+
+    sl::FeatureRequirements nis_requirements;
+    slGetFeatureRequirements(sl::kFeatureDLSS, nis_requirements);
+
+#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+    sl::FeatureRequirements dlssg_requirements;
+    slGetFeatureRequirements(sl::kFeatureDLSS, dlssg_requirements);
+#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
 }
 
 
@@ -549,6 +536,20 @@ void SLWrapper::SetSLConsts(const sl::Constants& consts) {
     }
 
     successCheck(slSetConstants(consts, *m_currentFrame, m_viewport), "slSetConstants");
+}
+
+void SLWrapper::FeatureLoad(sl::Feature feature, const bool turn_on) {
+
+    if (m_api == nvrhi::GraphicsAPI::D3D12) {
+        bool loaded;
+        slIsFeatureLoaded(feature, loaded);
+        if (loaded && !turn_on) {
+            slSetFeatureLoaded(feature, turn_on);
+        }
+        else if (!loaded && turn_on) {
+            slSetFeatureLoaded(feature, turn_on);
+        }
+    }
 }
 
 void SLWrapper::SetDLSSOptions(const sl::DLSSOptions consts)
@@ -639,6 +640,12 @@ void SLWrapper::QueryDLSSGState(uint64_t& estimatedVRamUsage, int& fps_multiplie
     minSize = m_dlssg_settings.minWidthOrHeight;
 }
 
+bool SLWrapper::Get_DLSSG_SwapChainRecreation(bool& turn_on) const {
+    turn_on = m_dlssg_shoudLoad;
+    auto tmp = m_dlssg_triggerswapchainRecreation;
+    return tmp;
+}
+
 void SLWrapper::CleanupDLSSG() {
     if (!m_sl_initialised) {
         log::warning("SL not initialised.");
@@ -646,7 +653,7 @@ void SLWrapper::CleanupDLSSG() {
     }
 
     m_Device->waitForIdle();
-    successCheck(slFreeResources(sl::kFeatureDLSS_G, m_viewport), "slFreeResources_DLSS");
+    successCheck(slFreeResources(sl::kFeatureDLSS_G, m_viewport), "slFreeResources_DLSSG");
 }
 
 #endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
@@ -1009,47 +1016,47 @@ void SLWrapper::SetReflexConsts(const sl::ReflexOptions options)
 
 void SLWrapper::Callback_FrameCount_Reflex_Sleep_Input_SimStart(donut::app::DeviceManager& manager) {
 
-    successCheck(SLWrapper::Get().slGetNewFrameToken(SLWrapper::Get().m_currentFrame, nullptr), "SL_GetFrameToken");
+    successCheck(slGetNewFrameToken(SLWrapper::Get().m_currentFrame, nullptr), "SL_GetFrameToken");
 
     if (SLWrapper::Get().GetReflexAvailable()) {
-        successCheck(SLWrapper::Get().slReflexSleep(*SLWrapper::Get().m_currentFrame), "Reflex_Sleep");
-        successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::eInputSample, *SLWrapper::Get().m_currentFrame), "Reflex_Input");
-        successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *SLWrapper::Get().m_currentFrame), "Reflex_SimStart");
+        successCheck(slReflexSleep(*SLWrapper::Get().m_currentFrame), "Reflex_Sleep");
+        successCheck(slReflexSetMarker(sl::ReflexMarker::eInputSample, *SLWrapper::Get().m_currentFrame), "Reflex_Input");
+        successCheck(slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *SLWrapper::Get().m_currentFrame), "Reflex_SimStart");
     }
 }
 
 void SLWrapper::ReflexCallback_SimEnd(donut::app::DeviceManager& manager) {
     if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *SLWrapper::Get().m_currentFrame), "Reflex_SimEnd");
+        successCheck(slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *SLWrapper::Get().m_currentFrame), "Reflex_SimEnd");
 }
 
 void SLWrapper::ReflexCallback_RenderStart(donut::app::DeviceManager& manager) {
     if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::eRenderSubmitStart, *SLWrapper::Get().m_currentFrame), "Reflex_SubmitStart");
+        successCheck(slReflexSetMarker(sl::ReflexMarker::eRenderSubmitStart, *SLWrapper::Get().m_currentFrame), "Reflex_SubmitStart");
 }
 
 void SLWrapper::ReflexCallback_RenderEnd(donut::app::DeviceManager& manager) {
     if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *SLWrapper::Get().m_currentFrame), "Reflex_SubmitEnd");
+        successCheck(slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *SLWrapper::Get().m_currentFrame), "Reflex_SubmitEnd");
 }
 
 void SLWrapper::ReflexCallback_PresentStart(donut::app::DeviceManager& manager) {
     if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::ePresentStart, *SLWrapper::Get().m_currentFrame), "Reflex_PresentStart");
+        successCheck(slReflexSetMarker(sl::ReflexMarker::ePresentStart, *SLWrapper::Get().m_currentFrame), "Reflex_PresentStart");
 }
 
 void SLWrapper::ReflexCallback_PresentEnd(donut::app::DeviceManager& manager) {
     if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *SLWrapper::Get().m_currentFrame), "Reflex_PresentEnd");
+        successCheck(slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *SLWrapper::Get().m_currentFrame), "Reflex_PresentEnd");
 }
 
 void SLWrapper::ReflexTriggerFlash(int frameNumber) {
-    successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::eTriggerFlash, *SLWrapper::Get().m_currentFrame), "Reflex_Flash");
+    successCheck(slReflexSetMarker(sl::ReflexMarker::eTriggerFlash, *SLWrapper::Get().m_currentFrame), "Reflex_Flash");
 }
 
 void SLWrapper::ReflexTriggerPcPing(int frameNumber) {
     if (SLWrapper::GetReflexAvailable())
-        successCheck(SLWrapper::Get().slReflexSetMarker(sl::ReflexMarker::ePCLatencyPing, *SLWrapper::Get().m_currentFrame), "Reflex_PCPing");
+        successCheck(slReflexSetMarker(sl::ReflexMarker::ePCLatencyPing, *SLWrapper::Get().m_currentFrame), "Reflex_PCPing");
 }
 
 void SLWrapper::QueryReflexStats(bool& reflex_lowLatencyAvailable, bool& reflex_flashAvailable, std::string& stats) {

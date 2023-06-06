@@ -1,12 +1,3 @@
-Streamline NDA SDK Sample 2.0.0 Release Notes
-
-Notes:
-  - This version of the sample adds DLSS-G support to the public repo
-  - This version has been extensively rewritten for SL 2.0 and to add support for a wider range of DLSSv3 features.
-
-Known Issues:
-  - With all DLSS features enabled, switching to fullscreen via Alt-Enter can cause a hang.  This is being tracked: however, it seems limited to the sample, which runs at a high frame rate, higher than any game.
-
 Streamline SDK Sample 1.1.2 Release Notes
 
 Notes:

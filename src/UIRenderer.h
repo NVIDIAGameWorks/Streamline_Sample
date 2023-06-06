@@ -88,11 +88,11 @@ public:
         }
 
         if (m_ui.DLSS_Mode != sl::DLSSMode::eOff) {
-            if      (m_ui.DLSS_Mode == sl::DLSSMode::eOff) m_dev_view_dlss_mode = 0;
-            else if (m_ui.DLSS_Mode == sl::DLSSMode::eMaxQuality) m_dev_view_dlss_mode = 2;
+            if (m_ui.DLSS_Mode == sl::DLSSMode::eMaxQuality) m_dev_view_dlss_mode = 2;
             else if (m_ui.DLSS_Mode == sl::DLSSMode::eBalanced) m_dev_view_dlss_mode = 3;
             else if (m_ui.DLSS_Mode == sl::DLSSMode::eMaxPerformance) m_dev_view_dlss_mode = 4;
             else if (m_ui.DLSS_Mode == sl::DLSSMode::eUltraPerformance) m_dev_view_dlss_mode = 5;
+            else if (m_ui.DLSS_Mode == sl::DLSSMode::eDLAA) m_dev_view_dlss_mode = 6;
         }
 
     }
@@ -245,7 +245,8 @@ protected:
                 "Quality##DLSSModes",
                 "Balanced##DLSSModes",
                 "Performance##DLSSModes",
-                "UltraPerformance##DLSSModes"
+                "UltraPerformance##DLSSModes",
+                "DLAA##DLSSModes"
             });
 
             ImGui::Text("Super Resolution");
@@ -271,6 +272,8 @@ protected:
             else if (m_dev_view_dlss_mode == 3) m_ui.DLSS_Mode = sl::DLSSMode::eBalanced;
             else if (m_dev_view_dlss_mode == 4) m_ui.DLSS_Mode = sl::DLSSMode::eMaxPerformance;
             else if (m_dev_view_dlss_mode == 5) m_ui.DLSS_Mode = sl::DLSSMode::eUltraPerformance;
+            //else if (m_dev_view_dlss_mode == 6) m_ui.DLSS_Mode = sl::DLSSMode::eUltraQuality;
+            else if (m_dev_view_dlss_mode == 6) m_ui.DLSS_Mode = sl::DLSSMode::eDLAA;
             else if (m_dev_view_dlss_mode == 1) {
                 if (m_ui.Resolution.x < 1920) m_ui.DLSS_Mode = sl::DLSSMode::eOff;
                 else if (m_ui.Resolution.x < 2560) m_ui.DLSS_Mode = sl::DLSSMode::eMaxQuality;
@@ -364,27 +367,33 @@ protected:
                 ImGui::Combo("TAA Camera Jitter", (int*)&m_ui.TemporalAntiAliasingJitter, "MSAA\0Halton\0R2\0White Noise\0");
             }
 
+
             if (m_ui.AAMode == AntiAliasingMode::DLSS)
             {
                 if (m_ui.DLSS_Mode == sl::DLSSMode::eOff) m_ui.DLSS_Mode = sl::DLSSMode::eBalanced;
 
-                // We do not show 'eOff' or 'eDLSSModeUltraQuality' so we need range [1:eDLSSModeUltraQuality).
+                // We do not show 'eOff' 
                 const char* DLSSModeNames[] = {
+                    "Off",
                     "Performance",
                     "Balanced",
                     "Quality",
                     "Ultra-Performance",
-                    // Not visible to end-users as per "RTX UI Developer Guidelines"
-                    //"eDLSSModeUltraQuality"
+                    "Ultra-Quality",
+                    "DLAA"
                 };
 
-                if (ImGui::BeginCombo("DLSS Mode", DLSSModeNames[(int)m_ui.DLSS_Mode - 1]))
+                if (ImGui::BeginCombo("DLSS Mode", DLSSModeNames[(int)m_ui.DLSS_Mode]))
                 {
-                    for (int i = 1; i < static_cast<int>(sl::DLSSMode::eCount) - 1; ++i)
+                    for (int i = 0; i < static_cast<int>(sl::DLSSMode::eCount); ++i)
                     {
+                        if ((i == static_cast<int>(sl::DLSSMode::eUltraQuality)) || (i == static_cast<int>(sl::DLSSMode::eOff))) continue;
+
                         bool is_selected = (i == (int)m_ui.DLSS_Mode);
 
-                        if (ImGui::Selectable(DLSSModeNames[i - 1], is_selected)) m_ui.DLSS_Mode = (sl::DLSSMode)i;
+                        if (ImGui::Selectable(DLSSModeNames[i], is_selected)) {
+                            m_ui.DLSS_Mode = (sl::DLSSMode)i;
+                        }
                         if (is_selected) ImGui::SetItemDefaultFocus();
                     }
                     ImGui::EndCombo();
@@ -396,6 +405,7 @@ protected:
                     "Balanced##Presets",
                     "MaxQuality##Presets",
                     "UltraPerformance##Presets",
+                    "UltraQuality##Presets",
                     "DLAA##Presets"
                     });
 
@@ -412,12 +422,15 @@ protected:
                 if (ImGui::CollapsingHeader("Presets")) {
                     ImGui::Indent();
                     // skip index 0, i.e. OFF
-                    for (int j = 1; j < static_cast<int>(sl::DLSSMode::eCount); j++)
+                    for (int j = 0; j < static_cast<int>(sl::DLSSMode::eCount); j++)
                     {
+
+                        if ((j == static_cast<int>(sl::DLSSMode::eUltraQuality)) || (j == static_cast<int>(sl::DLSSMode::eOff))) continue;
+
                         if (ImGui::BeginCombo(PresetSlotNames[j].c_str(), DLSSPresetNames[static_cast<int>(m_ui.DLSS_presets[j])].data()))
                         {
-                            for (int i = 0; i < DLSSPresetNames.size(); ++i)
-                            {
+                            for (int i = 0; i < DLSSPresetNames.size(); ++i) {
+
                                 bool is_selected = i == static_cast<int>(m_ui.DLSS_presets[j]);
 
                                 if (ImGui::Selectable(DLSSPresetNames[i].data(), is_selected)) m_ui.DLSS_presets[j] = (sl::DLSSPreset)i;
@@ -679,7 +692,7 @@ protected:
             ImGui::Text("Settings Menu");
             ImGui::PopFont();
             ImGui::PushFont(m_font_medium);
-            auto text = "NotRenderingGameFrames flag is on.";
+            auto text = "sl::DLSSGMode::eOff is set.";
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetWindowWidth() / 2 - ImGui::CalcTextSize(text).x / 2);
             ImGui::Text(text);
             text = "Streamline features may behave differently while your mouse is hovering the UI.";

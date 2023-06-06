@@ -114,6 +114,8 @@ private:
 
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     bool m_dlssg_available = false;
+    bool m_dlssg_triggerswapchainRecreation = false;
+    bool m_dlssg_shoudLoad = false;
     sl::DLSSGOptions m_dlssg_consts{};
     sl::DLSSGState m_dlssg_settings{};
 #endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
@@ -128,45 +130,45 @@ private:
     sl::FrameToken* m_currentFrame;
     sl::ViewportHandle m_viewport = {0};
 
-    // SL Interposer Functions
-    PFun_slInit* slInit{};
-    PFun_slShutdown* slShutdown{};
-    PFun_slIsFeatureSupported* slIsFeatureSupported{};
-    PFun_slIsFeatureLoaded* slIsFeatureLoaded{};
-    PFun_slSetFeatureLoaded* slSetFeatureLoaded{};
-    PFun_slEvaluateFeature* slEvaluateFeature{};
-    PFun_slAllocateResources* slAllocateResources{};
-    PFun_slFreeResources* slFreeResources{};
-    PFun_slSetTag* slSetTag{};
-    PFun_slGetFeatureRequirements* slGetFeatureRequirements{};
-    PFun_slGetFeatureVersion* slGetFeatureVersion{};
-    PFun_slUpgradeInterface* slUpgradeInterface{};
-    PFun_slSetConstants* slSetConstants{};
-    PFun_slGetNativeInterface* slGetNativeInterface{};
-    PFun_slGetFeatureFunction* slGetFeatureFunction{};
-    PFun_slGetNewFrameToken* slGetNewFrameToken{};
-    PFun_slSetD3DDevice* slSetD3DDevice{};
-
-    // DLSS specific functions
-    PFun_slDLSSGetOptimalSettings* slDLSSGetOptimalSettings{};
-    PFun_slDLSSGetState* slDLSSGetState{};
-    PFun_slDLSSSetOptions* slDLSSSetOptions{};
-
-    // NIS specific functions
-    PFun_slNISSetOptions* slNISSetOptions{};
-    PFun_slNISGetState* slNISGetState{};
-
-    // Reflex specific functions
-    PFun_slReflexGetState* slReflexGetState{};
-    PFun_slReflexSetMarker* slReflexSetMarker{};
-    PFun_slReflexSleep* slReflexSleep{};
-    PFun_slReflexSetOptions* slReflexSetOptions{};
-
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-    // DLSSG specific functions
-    PFun_slDLSSGGetState* slDLSSGGetState{};
-    PFun_slDLSSGSetOptions* slDLSSGSetOptions{};
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+//    // SL Interposer Functions
+//    PFun_slInit* slInit{};
+//    PFun_slShutdown* slShutdown{};
+//    PFun_slIsFeatureSupported* slIsFeatureSupported{};
+//    PFun_slIsFeatureLoaded* slIsFeatureLoaded{};
+//    PFun_slSetFeatureLoaded* slSetFeatureLoaded{};
+//    PFun_slEvaluateFeature* slEvaluateFeature{};
+//    PFun_slAllocateResources* slAllocateResources{};
+//    PFun_slFreeResources* slFreeResources{};
+//    PFun_slSetTag* slSetTag{};
+//    PFun_slGetFeatureRequirements* slGetFeatureRequirements{};
+//    PFun_slGetFeatureVersion* slGetFeatureVersion{};
+//    PFun_slUpgradeInterface* slUpgradeInterface{};
+//    PFun_slSetConstants* slSetConstants{};
+//    PFun_slGetNativeInterface* slGetNativeInterface{};
+//    PFun_slGetFeatureFunction* slGetFeatureFunction{};
+//    PFun_slGetNewFrameToken* slGetNewFrameToken{};
+//    PFun_slSetD3DDevice* slSetD3DDevice{};
+//
+//    // DLSS specific functions
+//    PFun_slDLSSGetOptimalSettings* slDLSSGetOptimalSettings{};
+//    PFun_slDLSSGetState* slDLSSGetState{};
+//    PFun_slDLSSSetOptions* slDLSSSetOptions{};
+//
+//    // NIS specific functions
+//    PFun_slNISSetOptions* slNISSetOptions{};
+//    PFun_slNISGetState* slNISGetState{};
+//
+//    // Reflex specific functions
+//    PFun_slReflexGetState* slReflexGetState{};
+//    PFun_slReflexSetMarker* slReflexSetMarker{};
+//    PFun_slReflexSleep* slReflexSleep{};
+//    PFun_slReflexSetOptions* slReflexSetOptions{};
+//
+//#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+//    // DLSSG specific functions
+//    PFun_slDLSSGGetState* slDLSSGGetState{};
+//    PFun_slDLSSGSetOptions* slDLSSGSetOptions{};
+//#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
 
 
 public:
@@ -198,6 +200,7 @@ public:
 
 
     void SetSLConsts(const sl::Constants& consts);
+    void FeatureLoad(sl::Feature feature, const bool turn_on);
     void TagResources_General(
         nvrhi::ICommandList* commandList,
         const donut::engine::IView* view,
@@ -249,8 +252,11 @@ public:
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     void SetDLSSGOptions(const sl::DLSSGOptions consts);
     bool GetDLSSGAvailable() { return m_dlssg_available; }
-    bool GetDLSSGLastEnable() { return m_dlssg_consts.mode != sl::DLSSGMode::eOff; }
+    bool GetDLSSGLastEnable() { return m_dlssg_consts.mode == sl::DLSSGMode::eOn; }
     void QueryDLSSGState(uint64_t& estimatedVRamUsage, int& fps_multiplier, sl::DLSSGStatus& status, int& minSize);
+    void Set_DLSSG_SwapChainRecreation(bool on) { m_dlssg_triggerswapchainRecreation = true; m_dlssg_shoudLoad = on; }
+    bool Get_DLSSG_SwapChainRecreation(bool& turn_on) const;
+    void Quiet_DLSSG_SwapChainRecreation() { m_dlssg_triggerswapchainRecreation = false; }
     void CleanupDLSSG();
 #endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
 };
