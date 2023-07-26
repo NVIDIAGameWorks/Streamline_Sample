@@ -156,7 +156,7 @@ struct UIData
     // NIS specific parameters
     bool                                NIS_Supported = false;
     sl::NISMode                         NIS_Mode = sl::NISMode::eOff;
-    float                               NIS_Sharpness = 0.f;
+    float                               NIS_Sharpness = 0.5f;
 
     // LATENCY specific parameters
     bool                                REFLEX_Supported = false;

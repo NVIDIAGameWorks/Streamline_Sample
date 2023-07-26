@@ -781,8 +781,8 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
         // TAG STREAMLINE RESOURCES
         SLWrapper::Get().TagResources_DLSS_NIS(m_CommandList,
             m_View->GetChildView(ViewType::PLANAR, 0),
-            m_RenderTargets->NisColor,
-            m_RenderTargets->PreUIColor);
+            m_RenderTargets->PreUIColor,
+            m_RenderTargets->NisColor);
 
         SLWrapper::Get().EvaluateNIS(m_CommandList);
     }

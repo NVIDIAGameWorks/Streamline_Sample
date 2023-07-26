@@ -554,7 +554,6 @@ void DeviceManagerOverride_DX12::DestroyDeviceAndSwapChain()
 
     m_FrameFence = nullptr;
 
-    m_SwapChain_native->Release();
     m_SwapChain_proxy = nullptr;
     m_SwapChain_native = nullptr;
 
@@ -686,7 +685,6 @@ void DeviceManagerOverride_DX12::BeginFrame()
         m_SwapChain_proxy->SetFullscreenState(false, nullptr);
         ReleaseRenderTargets();
 
-        m_SwapChain_native->Release();
         m_SwapChain_proxy = nullptr;
         m_SwapChain_native = nullptr;
 

@@ -298,6 +298,10 @@ protected:
             int nis_mode = m_ui.NIS_Mode == sl::NISMode::eScaler ? 1 : 0;
             ImGui::Combo("##NISMode", &nis_mode, "Off\0On\0");
             m_ui.NIS_Mode = nis_mode == 1 ? sl::NISMode::eScaler : sl::NISMode::eOff;
+            if (nis_mode == 1)
+            {
+                ImGui::DragFloat("Sharpness", &m_ui.NIS_Sharpness, 0.05f, 0, 1);
+            }
             if (! m_ui.NIS_Supported) popDisabled();
 
             //
@@ -551,7 +555,7 @@ protected:
                 int nis_mode = m_ui.NIS_Mode == sl::NISMode::eScaler ? 1 : 0;
                 ImGui::Combo("NIS Mode", &nis_mode, "Off\0On\0");
                 m_ui.NIS_Mode = nis_mode == 1 ? sl::NISMode::eScaler : sl::NISMode::eOff;
-                ImGui::DragFloat("Sharpness", &m_ui.NIS_Sharpness, 0.1f, 0, 2);
+                ImGui::DragFloat("Sharpness", &m_ui.NIS_Sharpness, 0.05f, 0, 1);
             }
 
             //

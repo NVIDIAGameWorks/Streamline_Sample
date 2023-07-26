@@ -92,45 +92,45 @@ bool ProcessCommandLine(int argc, const char* const* argv, donut::app::DeviceCre
 {
     for (int i = 1; i < argc; i++)
     {
-        if (!strcmp(argv[i], "-width"))
+        if (!_stricmp(argv[i], "-width"))
         {
             deviceParams.backBufferWidth = std::stoi(argv[++i]);
         }
-        else if (!strcmp(argv[i], "-height"))
+        else if (!_stricmp(argv[i], "-height"))
         {
             deviceParams.backBufferHeight = std::stoi(argv[++i]);
         }
-        else if (!strcmp(argv[i], "-fullscreen"))
+        else if (!_stricmp(argv[i], "-fullscreen"))
         {
             deviceParams.startFullscreen = true;
         }
-        else if (!strcmp(argv[i], "-debug"))
+        else if (!_stricmp(argv[i], "-debug"))
         {
             deviceParams.enableDebugRuntime = true;
             deviceParams.enableNvrhiValidationLayer = true;
         }
-        else if (!strcmp(argv[i], "-verbose"))
+        else if (!_stricmp(argv[i], "-verbose"))
         {
             donut::log::SetMinSeverity(donut::log::Severity::Info);
         }
-        else if (!strcmp(argv[i], "-logToFile"))
+        else if (!_stricmp(argv[i], "-logToFile"))
         {
             log_file = std::ofstream("log.txt");
             donut::log::SetCallback(&logToFile);
         }
-        else if (!strcmp(argv[i], "-noSigCheck"))
+        else if (!_stricmp(argv[i], "-noSigCheck"))
         {
             checkSig = false;
         }
-        else if (!strcmp(argv[i], "-vsync"))
+        else if (!_stricmp(argv[i], "-vsync"))
         {
             deviceParams.vsyncEnabled = true;
         }
-        else if (!strcmp(argv[i], "-sllog"))
+        else if (!_stricmp(argv[i], "-sllog"))
         {
             enableSLlog = true;
         }
-        else if (!strcmp(argv[i], "-scene"))
+        else if (!_stricmp(argv[i], "-scene"))
         {
             sceneName = argv[i];
         }
