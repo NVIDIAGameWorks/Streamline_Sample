@@ -252,7 +252,7 @@ public:
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     void SetDLSSGOptions(const sl::DLSSGOptions consts);
     bool GetDLSSGAvailable() { return m_dlssg_available; }
-    bool GetDLSSGLastEnable() { return m_dlssg_consts.mode == sl::DLSSGMode::eOn; }
+    bool GetDLSSGLastEnable() { return m_dlssg_consts.mode != sl::DLSSGMode::eOff; }
     void QueryDLSSGState(uint64_t& estimatedVRamUsage, int& fps_multiplier, sl::DLSSGStatus& status, int& minSize);
     void Set_DLSSG_SwapChainRecreation(bool on) { m_dlssg_triggerswapchainRecreation = true; m_dlssg_shoudLoad = on; }
     bool Get_DLSSG_SwapChainRecreation(bool& turn_on) const;

@@ -315,11 +315,17 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     // DLSS-G Setup
 
-    // If DLSS-G has been turned off, then we tell tell SL to clean it up expressly 
-    bool shouldbeLoaded;
-    SLWrapper::Get().Get_DLSSG_SwapChainRecreation(shouldbeLoaded);
-    if ((shouldbeLoaded == true) != (m_ui.DLSSG_mode == sl::DLSSGMode::eOn)) {
-        SLWrapper::Get().Set_DLSSG_SwapChainRecreation(m_ui.DLSSG_mode == sl::DLSSGMode::eOn);
+    // Query whether SLWrapper thinks that DLSS-FG is wanted
+    bool prevDlssgWanted;
+    SLWrapper::Get().Get_DLSSG_SwapChainRecreation(prevDlssgWanted);
+
+    // Query whether the UI "wants" DLSS-FG to be active
+    bool dlssgWanted = (m_ui.DLSSG_mode != sl::DLSSGMode::eOff);
+
+    // If there is a change, trigger a swapchain recreation
+    if (prevDlssgWanted != dlssgWanted)
+    {
+        SLWrapper::Get().Set_DLSSG_SwapChainRecreation(dlssgWanted);
     }
 
     // This is where DLSS-G is toggled On and Off (using dlssgConst.mode) and where we set DLSS-G parameters.  

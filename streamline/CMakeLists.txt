@@ -1,3 +1,25 @@
+#
+# Copyright (c) 2023 NVIDIA CORPORATION. All rights reserved
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+
 # Variables
 set(STREAMLINE_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}" CACHE STRING "SL SDK Root Directory")
 find_path(STREAMLINE_INCLUDE_DIR sl.h HINTS "${STREAMLINE_SDK_ROOT}/include" NO_CACHE)
@@ -9,18 +31,18 @@ find_file(STREAMLINE_INTERPOSER_DLL sl.interposer.dll HINTS "${STREAMLINE_SDK_RO
 set(STREAMLINE_INSTALL_DIR "." CACHE STRING "Streamline Install Dir")
  
 # Sort Features
-option(STREAMLINE_FEATURE_DLSS      "Include DLSS dll"      OFF)
+option(STREAMLINE_FEATURE_DLSS_SR   "Include DLSS-SR dll"   OFF)
 option(STREAMLINE_FEATURE_NRD       "Include NRD dll"       OFF)
 option(STREAMLINE_FEATURE_IMGUI     "Include Imgui dll"     OFF)
 option(STREAMLINE_FEATURE_REFLEX    "Include Reflex dll"    OFF)
 option(STREAMLINE_FEATURE_NIS       "Include NIS dll"       OFF)
-option(STREAMLINE_FEATURE_DLSSG     "Include DLSS-G dll"    OFF)
+option(STREAMLINE_FEATURE_DLSS_FG   "Include DLSS-FG dll"   OFF)
 
 option(STREAMLINE_IMPORT_AS_INTERFACE "Import Streamline as an Interface without lib" OFF)
 
 file(GLOB STREAMLINE_DLLS "${STREAMLINE_PLUGIN_DLL_DIR}sl.interposer.dll" "${STREAMLINE_PLUGIN_DLL_DIR}sl.common.dll")
 
-if (STREAMLINE_FEATURE_DLSS)
+if (STREAMLINE_FEATURE_DLSS_SR)
     list (APPEND STREAMLINE_DLLS "${STREAMLINE_PLUGIN_DLL_DIR}sl.dlss.dll" "${STREAMLINE_SUPPORT_DLL_DIR}nvngx_dlss.dll")
 endif()
 
@@ -45,11 +67,10 @@ if (STREAMLINE_FEATURE_NIS)
     list (APPEND STREAMLINE_DLLS "${STREAMLINE_PLUGIN_DLL_DIR}sl.nis.dll")
 endif()
 
-# ONLY DLSS-G DLSS_G Release
-if (STREAMLINE_FEATURE_DLSSG)
+if (STREAMLINE_FEATURE_DLSS_FG)
     list (APPEND STREAMLINE_DLLS "${STREAMLINE_PLUGIN_DLL_DIR}sl.dlss_g.dll" "${STREAMLINE_SUPPORT_DLL_DIR}nvngx_dlssg.dll")
 endif()
-# NDA ONLY DLSS-G DLSS_G Release
+
 
 # We copy all the Jsons that may be present. 
 if(NOT STREAMLINE_PLUGIN_JSON_DIR)
@@ -88,6 +109,8 @@ if (WIN32)
             COMMENT "Copied JSONs: ${STREAMLINE_JSONS}")
     endif()
     add_dependencies(streamline CopyStreamlineDLLs)
+
+    set_target_properties(CopyStreamlineDLLs PROPERTIES FOLDER "Streamline")
 endif ()
 
 install(FILES ${STREAMLINE_DLLS} ${STREAMLINE_JSONS} DESTINATION "${STREAMLINE_INSTALL_DIR}")

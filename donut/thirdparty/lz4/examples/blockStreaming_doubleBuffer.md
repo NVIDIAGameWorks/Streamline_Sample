@@ -1,4 +1,4 @@
-﻿# LZ4 Streaming API Example : Double Buffer
+# LZ4 Streaming API Example : Double Buffer
 by *Takayuki Matsuoka*
 
 `blockStreaming_doubleBuffer.c` is LZ4 Streaming API example which implements double buffer (de)compression.

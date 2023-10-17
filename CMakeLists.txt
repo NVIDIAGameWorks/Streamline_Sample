@@ -39,14 +39,12 @@ if (MSVC)
 endif()
 set(PACKAGE_DIRECTORY "${CMAKE_SOURCE_DIR}/_package")
 
-# Overide the donut option
-option(STREAMLINE_FEATURE_DLSS      "Include DLSS dll"                          ON)
-option(STREAMLINE_FEATURE_IMGUI     "Include Imgui dll"                         ON)
-# NDA ONLY DLSS-G DLSS_G Release
-option(STREAMLINE_FEATURE_DLSSG     "Include DLSS-G dll"                        ON)
-# END NDA ONLY DLSS-G DLSS_G Release
-option(STREAMLINE_FEATURE_REFLEX    "Include Reflex dll"                        ON)
-option(STREAMLINE_FEATURE_NIS       "Include NIS dll"                           ON)
+# Overide donut options
+option(STREAMLINE_FEATURE_DLSS_SR   "Include DLSS-SR dll"   ON)
+option(STREAMLINE_FEATURE_IMGUI     "Include Imgui dll"     ON)
+option(STREAMLINE_FEATURE_REFLEX    "Include Reflex dll"    ON)
+option(STREAMLINE_FEATURE_NIS       "Include NIS dll"       ON)
+option(STREAMLINE_FEATURE_DLSS_FG   "Include DLSS-FG dll"   ON)
 
 set(STREAMLINE_INSTALL_DIR  "${PACKAGE_DIRECTORY}/_bin" CACHE STRING "Streamline Install Dir")
 

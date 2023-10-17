@@ -144,21 +144,21 @@ protected:
         double fps = 1.0 / GetDeviceManager()->GetAverageFrameTimeSeconds();
         ImGui::Text("Engine FPS: %.0f ", fps);
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-        if (m_ui.DLSSG_mode == sl::DLSSGMode::eOn ) {
+        if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff ) {
             ImGui::Text("True FPS: %.0f ", m_ui.DLSSG_fps);
         }
 #endif // NDA ONLY DLSS-G DLSS_G Release
 
         // Vsync
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-        if (m_ui.DLSSG_mode == sl::DLSSGMode::eOn && !m_dev_view) {
+        if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff && !m_dev_view) {
             pushDisabled();
             m_ui.EnableVsync = false;
         }
 #endif // NDA ONLY DLSS-G DLSS_G Release
         ImGui::Checkbox("VSync", &m_ui.EnableVsync);
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-        if (m_ui.DLSSG_mode == sl::DLSSGMode::eOn && !m_dev_view) {
+        if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff && !m_dev_view) {
             popDisabled();
         }
 #endif // NDA ONLY DLSS-G DLSS_G Release
@@ -230,7 +230,7 @@ protected:
             ImGui::Text("Frame Generation");
             ImGui::SameLine();
             if (!m_ui.DLSSG_Supported || !m_ui.REFLEX_Supported) pushDisabled();
-            ImGui::Combo("##FrameGeneration", (int*)&m_ui.DLSSG_mode, "Off\0On\0");
+            ImGui::Combo("##FrameGeneration", (int*)&m_ui.DLSSG_mode, "Off\0On\0Auto (Dynamic Frame Generation)\0");
             if (!m_ui.DLSSG_Supported || !m_ui.REFLEX_Supported) popDisabled();
             if (m_ui.DLSSG_status != "") ImGui::Text((std::string("State: ") + m_ui.DLSSG_status).c_str());
 #endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
@@ -313,7 +313,7 @@ protected:
             if (!m_ui.REFLEX_Supported) pushDisabled();
 
 #ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-            if (m_ui.DLSSG_mode == sl::DLSSGMode::eOn) {
+            if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff) {
                 auto i = (int)m_ui.REFLEX_Mode - 1;
                 i = i < 0 ? 0 : i;
                 ImGui::Combo("##Reflex", &i, "On\0On + Boost\0");
@@ -533,7 +533,7 @@ protected:
                     m_ui.DLSSG_mode = sl::DLSSGMode::eOff;
                 }
                 else {
-                    ImGui::Combo("DLSS-G Mode", (int*)&m_ui.DLSSG_mode, "OFF\0ON");
+                    ImGui::Combo("DLSS-G Mode", (int*)&m_ui.DLSSG_mode, "Off\0On\0Auto (Dynamic Frame Generation)\0");
                 }
 
 

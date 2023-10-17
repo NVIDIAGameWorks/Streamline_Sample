@@ -139,18 +139,12 @@ bool successCheck(sl::Result result, char* location) {
 
 std::wstring GetSlInterposerDllLocation() {
 
-    char path[PATH_MAX] = { 0 };
+    wchar_t path[PATH_MAX] = { 0 };
 #ifdef _WIN32
-    if (GetModuleFileNameA(nullptr, path, dim(path)) == 0)
+    if (GetModuleFileNameW(nullptr, path, dim(path)) == 0)
         return std::wstring();
 #else // _WIN32
-    // /proc/self/exe is mostly linux-only, but can't hurt to try it elsewhere
-    if (readlink("/proc/self/exe", path, std::size(path)) <= 0)
-    {
-        // portable but assumes executable dir == cwd
-        if (!getcwd(path, std::size(path)))
-            return ""; // failure
-    }
+#error Unsupported platform for GetSlInterposerDllLocation!
 #endif // _WIN32
 
     auto basePath = std::filesystem::path(path).parent_path();
