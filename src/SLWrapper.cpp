@@ -191,13 +191,22 @@ bool SLWrapper::Initialize_preDevice(nvrhi::GraphicsAPI api, const bool& checkSi
     }
 #endif
 
-    sl::Feature featuresToLoad[] = { 
+    sl::Feature featuresToLoad[] = {
+#ifdef STREAMLINE_FEATURE_DLSS_SR
         sl::kFeatureDLSS,
+#endif
+#ifdef STREAMLINE_FEATURE_NIS
         sl::kFeatureNIS,
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+#endif
+#ifdef STREAMLINE_FEATURE_DLSS_FG
         sl::kFeatureDLSS_G,
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
-        sl::kFeatureReflex
+#endif
+#ifdef STREAMLINE_FEATURE_REFLEX
+        sl::kFeatureReflex,
+#endif
+#ifdef STREAMLINE_FEATURE_DEEPDVC
+        sl::kFeatureDeepDVC
+#endif
     };
     pref.featuresToLoad = featuresToLoad;
     pref.numFeaturesToLoad = _countof(featuresToLoad);
@@ -316,12 +325,22 @@ void SLWrapper::FindAdapter(void*& adapterPtr, void* vkDevices) {
 
             log::info("Found adapter: %S, DeviceId=0x%X, Vendor: %i", adapterDesc.Description, adapterDesc.DeviceId, adapterDesc.VendorId);
 
-            bool supported = checkFeature(sl::kFeatureDLSS, "DLSS");
-            supported &= checkFeature(sl::kFeatureReflex, "Reflex");
+            bool supported = true;
+            #ifdef STREAMLINE_FEATURE_DLSS_SR
+            supported &= checkFeature(sl::kFeatureDLSS, "DLSS");
+            #endif
+            #ifdef STREAMLINE_FEATURE_NIS
             supported &= checkFeature(sl::kFeatureNIS, "NIS");
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+            #endif
+            #ifdef STREAMLINE_FEATURE_DLSS_FG
             supported &= checkFeature(sl::kFeatureDLSS_G, "DLSS_G");
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+            #endif
+            #ifdef STREAMLINE_FEATURE_REFLEX
+            supported &= checkFeature(sl::kFeatureReflex, "Reflex");
+            #endif
+            #ifdef STREAMLINE_FEATURE_DEEPDVC
+            supported &= checkFeature(sl::kFeatureDeepDVC, "DeepDVC");
+            #endif
 
             if (supported) {
                 pAdapter_best = pAdapter;
@@ -364,12 +383,22 @@ void SLWrapper::FindAdapter(void*& adapterPtr, void* vkDevices) {
             auto str = adapterDesc.deviceName.data();
             log::info("Found adapter: %s, DeviceId=0x%X, Vendor: %i", str, adapterDesc.deviceID, adapterDesc.vendorID);
 
-            bool supported = checkFeature(sl::kFeatureDLSS, "DLSS");
-            supported &= checkFeature(sl::kFeatureReflex, "Reflex");
+            bool supported = true;
+            #ifdef STREAMLINE_FEATURE_DLSS_SR
+            supported &= checkFeature(sl::kFeatureDLSS, "DLSS");
+            #endif
+            #ifdef STREAMLINE_FEATURE_NIS
             supported &= checkFeature(sl::kFeatureNIS, "NIS");
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+            #endif
+            #ifdef STREAMLINE_FEATURE_DLSS_FG
             supported &= checkFeature(sl::kFeatureDLSS_G, "DLSS_G");
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+            #endif
+            #ifdef STREAMLINE_FEATURE_REFLEX
+            supported &= checkFeature(sl::kFeatureReflex, "Reflex");
+            #endif
+            #ifdef STREAMLINE_FEATURE_DEEPDVC
+            supported &= checkFeature(sl::kFeatureDeepDVC, "DeepDVC");
+            #endif
 
             if (supported) {
                 pAdapter_best = &devicePtr;
@@ -451,42 +480,55 @@ void SLWrapper::UpdateFeatureAvailable(donut::app::DeviceManager* deviceManager)
 
 
     // Check if features are fully functional (2nd call of slIsFeatureSupported onwards)
-
+#ifdef STREAMLINE_FEATURE_DLSS_SR
     m_dlss_available = successCheck(slIsFeatureSupported(sl::kFeatureDLSS, adapterInfo), "slIsFeatureSupported_DLSS");
     if (m_dlss_available) log::info("DLSS is supported on this system.");
     else log::warning("DLSS is not fully functional on this system.");
+#endif
 
+#ifdef STREAMLINE_FEATURE_NIS
+    m_nis_available = successCheck(slIsFeatureSupported(sl::kFeatureNIS, adapterInfo), "slIsFeatureSupported_NIS");
+    if (m_nis_available) log::info("NIS is supported on this system.");
+    else log::warning("NIS is not fully functional on this system.");
+#endif
+
+#ifdef STREAMLINE_FEATURE_DLSS_FG
+    m_dlssg_available = successCheck(slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo), "slIsFeatureSupported_DLSSG");
+    if (m_dlssg_available) log::info("DLSS-G is supported on this system.");
+    else log::warning("DLSS-G is not fully functional on this system.");
+#endif
+
+#ifdef STREAMLINE_FEATURE_REFLEX
     m_reflex_available = successCheck(slIsFeatureSupported(sl::kFeatureReflex, adapterInfo), "slIsFeatureSupported_REFLEX");
     if (m_reflex_available) log::info("Reflex is supported on this system.");
     else log::warning("Reflex is not fully functional on this system.");
 
-    m_nis_available = successCheck(slIsFeatureSupported(sl::kFeatureNIS, adapterInfo), "slIsFeatureSupported_NIS");
-    if (m_nis_available) log::info("NIS is supported on this system.");
-    else log::warning("NIS is not fully functional on this system.");
+    m_pcl_available = successCheck(slIsFeatureSupported(sl::kFeaturePCL, adapterInfo), "slIsFeatureSupported_PCL");
+    if (m_pcl_available) log::info("PCL is supported on this system.");
+    else log::warning("PCL is not fully functional on this system.");
+#endif
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-    m_dlssg_available = successCheck(slIsFeatureSupported(sl::kFeatureDLSS_G, adapterInfo), "slIsFeatureSupported_DLSSG");
-    if (m_dlssg_available) log::info("DLSS-G is supported on this system.");
-    else log::warning("DLSS-G is not fully functional on this system.");
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
-
+#ifdef STREAMLINE_FEATURE_DEEPDVC
+    m_deepdvc_available = successCheck(slIsFeatureSupported(sl::kFeatureDeepDVC, adapterInfo), "slIsFeatureSupported_DeepDVC");
+    if (m_deepdvc_available) log::info("DeepDVC is supported on this system.");
+    else log::warning("DeepDVC is not fully functional on this system.");
+#endif
 
     // We do not leverage the outcome of in the sample, however this is how it would be implemented.
+    // sl::FeatureRequirements dlss_requirements;
+    // slGetFeatureRequirements(sl::kFeatureDLSS, dlss_requirements);
 
-    sl::FeatureRequirements dlss_requirements;
-    slGetFeatureRequirements(sl::kFeatureDLSS, dlss_requirements);
+    // sl::FeatureRequirements reflex_requirements;
+    // slGetFeatureRequirements(sl::kFeatureReflex, reflex_requirements);
 
-    sl::FeatureRequirements reflex_requirements;
-    slGetFeatureRequirements(sl::kFeatureDLSS, reflex_requirements);
+    // sl::FeatureRequirements nis_requirements;
+    // slGetFeatureRequirements(sl::kFeatureNIS, nis_requirements);
 
-    sl::FeatureRequirements nis_requirements;
-    slGetFeatureRequirements(sl::kFeatureDLSS, nis_requirements);
+    // sl::FeatureRequirements deepdvc_requirements;
+    // slGetFeatureRequirements(sl::kFeatureDeepDVC, deepdvc_requirements);
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-    sl::FeatureRequirements dlssg_requirements;
-    slGetFeatureRequirements(sl::kFeatureDLSS, dlssg_requirements);
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
-
+    // sl::FeatureRequirements dlssg_requirements;
+    // slGetFeatureRequirements(sl::kFeatureDLSS, dlssg_requirements);
 }
 
 
@@ -578,13 +620,19 @@ void SLWrapper::QueryDLSSOptimalSettings(DLSSSettings& settings) {
     settings.maxRenderSize.y = dlssOptimal.renderHeightMax;
 }
 
-void SLWrapper::CleanupDLSS() {
+void SLWrapper::CleanupDLSS(bool wfi) {
     if (!m_sl_initialised) {
         log::warning("SL not initialised.");
         return;
     }
-    m_Device->waitForIdle();
-    successCheck(slFreeResources(sl::kFeatureDLSS, m_viewport), "slFreeResources_DLSS");
+
+    if (wfi) {
+        m_Device->waitForIdle();
+    }
+
+    sl::Result status = slFreeResources(sl::kFeatureDLSS, m_viewport);
+    // if we've never ran the feature on this viewport, this call may return 'eErrorInvalidParameter'
+    assert(status == sl::Result::eOk || status == sl::Result::eErrorInvalidParameter);
 }
 
 void SLWrapper::SetNISOptions(const sl::NISOptions consts)
@@ -599,16 +647,42 @@ void SLWrapper::SetNISOptions(const sl::NISOptions consts)
 
 }
 
-void SLWrapper::CleanupNIS() {
+void SLWrapper::CleanupNIS(bool wfi) {
+    if (!m_sl_initialised) {
+        log::warning("SL not initialised.");
+        return;
+    }
+
+    if (wfi) {
+        m_Device->waitForIdle();
+    }
+
+    successCheck(slFreeResources(sl::kFeatureNIS, m_viewport), "slFreeResources_NIS");
+}
+
+
+void SLWrapper::SetDeepDVCOptions(const sl::DeepDVCOptions consts)
+{
+    if (!m_sl_initialised || !m_deepdvc_available) {
+        log::warning("SL not initialised or DeepDVC not available.");
+        return;
+    }
+
+    m_deepdvc_consts = consts;
+    successCheck(slDeepDVCSetOptions(m_viewport, m_deepdvc_consts), "slDeepDVCSetOptions");
+
+}
+
+void SLWrapper::CleanupDeepDVC() {
     if (!m_sl_initialised) {
         log::warning("SL not initialised.");
         return;
     }
     m_Device->waitForIdle();
-    successCheck(slFreeResources(sl::kFeatureNIS, m_viewport), "slFreeResources_NIS");
+    successCheck(slFreeResources(sl::kFeatureDeepDVC, m_viewport), "slFreeResources_DeepDVC");
 }
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+
 void SLWrapper::SetDLSSGOptions(const sl::DLSSGOptions consts) {
     if (!m_sl_initialised || !m_dlssg_available) {
         log::warning("SL not initialised or DLSSG not available.");
@@ -640,17 +714,22 @@ bool SLWrapper::Get_DLSSG_SwapChainRecreation(bool& turn_on) const {
     return tmp;
 }
 
-void SLWrapper::CleanupDLSSG() {
+void SLWrapper::CleanupDLSSG(bool wfi) {
     if (!m_sl_initialised) {
         log::warning("SL not initialised.");
         return;
     }
 
-    m_Device->waitForIdle();
-    successCheck(slFreeResources(sl::kFeatureDLSS_G, m_viewport), "slFreeResources_DLSSG");
+    if (wfi) {
+        m_Device->waitForIdle();
+    }
+
+    sl::Result status = slFreeResources(sl::kFeatureDLSS_G, m_viewport);
+    // if we've never ran the feature on this viewport, this call may return 'eErrorInvalidParameter'
+    assert(status == sl::Result::eOk || status == sl::Result::eErrorInvalidParameter);
 }
 
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
 
 sl::Resource SLWrapper::allocateResourceCallback(const sl::ResourceAllocationDesc* resDesc, void* device) {
 
@@ -928,6 +1007,127 @@ void SLWrapper::TagResources_DLSS_NIS(
 }
 
 
+void SLWrapper::TagResources_DLSS_FG(
+    nvrhi::ICommandList* commandList,
+    bool validViewportExtent,
+    sl::Extent backBufferExtent)
+{
+    if (!m_sl_initialised) {
+        log::warning("Streamline not initialised.");
+        return;
+    }
+    if (m_Device == nullptr) {
+        log::error("No device available.");
+        return;
+    }
+
+    void* cmdbuffer{};
+
+#if USE_DX11
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
+    {
+        cmdbuffer = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
+    }
+#endif
+
+#ifdef USE_DX12
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
+    {
+        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
+    }
+#endif
+
+#ifdef USE_VK
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
+    {
+        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);
+    }
+#endif
+
+    // tag backbuffer resource mainly to pass extent data and therefore resource can be nullptr.
+    // If the viewport extent is invalid - set extent to null. This informs streamline that full resource extent needs to be used
+    sl::ResourceTag backBufferResourceTag = sl::ResourceTag{ nullptr, sl::kBufferTypeBackbuffer, sl::ResourceLifecycle{}, validViewportExtent ? &backBufferExtent : nullptr };
+    sl::ResourceTag inputs[] = { backBufferResourceTag };
+    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), cmdbuffer), "slSetTag_dlss_fg");
+}
+
+void SLWrapper::TagResources_DeepDVC(
+    nvrhi::ICommandList * commandList,
+    const donut::engine::IView * view,
+    nvrhi::ITexture * Output)
+{
+    if (!m_sl_initialised) {
+        log::warning("Streamline not initialised.");
+        return;
+    }
+    if (m_Device == nullptr) {
+        log::error("No device available.");
+        return;
+    }
+
+    sl::Extent fullExtent{ 0, 0, Output->getDesc().width, Output->getDesc().height };
+    sl::Resource outputResource;
+    void* cmdbuffer;
+
+#if USE_DX11
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
+    {
+        outputResource = sl::Resource{ sl::ResourceType::eTex2d, Output->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource), 0 };
+        cmdbuffer = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
+    }
+#endif
+
+#ifdef USE_DX12
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
+    {
+        outputResource = sl::Resource{ sl::ResourceType::eTex2d, Output->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource), nullptr, nullptr, static_cast<uint32_t>(D3D12convertResourceStates(Output->getDesc().initialState)) };
+        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
+    }
+#endif
+
+#ifdef USE_VK
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
+    {
+        nvrhi::TextureSubresourceSet subresources = view->GetSubresources();
+        auto view = (uint32_t)m_viewport;
+
+        auto rsc_lambda = [this, &subresources, &view](sl::Resource& rsc, nvrhi::ITexture* inp) {
+            auto const& desc = inp->getDesc();
+            auto const& vkDesc = ((nvrhi::vulkan::Texture*)inp)->imageInfo;
+            rsc = sl::Resource{ sl::ResourceType::eTex2d, inp->getNativeObject(nvrhi::ObjectTypes::VK_Image),
+                inp->getNativeObject(nvrhi::ObjectTypes::VK_DeviceMemory),
+                inp->getNativeView(nvrhi::ObjectTypes::VK_ImageView, desc.format, subresources),
+                static_cast<uint32_t>(vkDesc.initialLayout) };
+            rsc.width = desc.width;
+            rsc.height = desc.height;
+            rsc.nativeFormat = static_cast<uint32_t>(nvrhi::vulkan::convertFormat(desc.format));
+            rsc.mipLevels = desc.mipLevels;
+            rsc.arrayLayers = vkDesc.arrayLayers;
+            rsc.flags = static_cast<uint32_t>(vkDesc.flags);
+            rsc.usage = static_cast<uint32_t>(vkDesc.usage);
+            };
+
+        rsc_lambda(outputResource, Output);
+        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);
+    }
+#endif
+    sl::ResourceTag outputResourceTag = sl::ResourceTag{ &outputResource, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
+
+    sl::ResourceTag inputs[] = { outputResourceTag };
+    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), cmdbuffer), "slSetTag_deepdvc");
+}
+
+
+void SLWrapper::UnTagResources_DeepDVC()
+{
+    sl::ResourceTag outputResourceTag = sl::ResourceTag{ nullptr, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent };
+
+    sl::ResourceTag inputs[] = { outputResourceTag };
+    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), nullptr), "slSetTag_deepdvc_untag");
+}
+
+
+
 void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList) {
 
     void* nativeCommandList = nullptr;
@@ -994,6 +1194,51 @@ void SLWrapper::EvaluateNIS(nvrhi::ICommandList* commandList) {
 
 }
 
+void SLWrapper::EvaluateDeepDVC(nvrhi::ICommandList* commandList) {
+
+    void* nativeCommandList = nullptr;
+
+#if USE_DX11
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
+        nativeCommandList = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
+#endif
+
+#ifdef USE_DX12
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
+        nativeCommandList = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
+#endif
+
+#ifdef USE_VK
+    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
+        nativeCommandList = commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);
+#endif
+
+    if (nativeCommandList == nullptr) {
+        log::warning("Failed to retrieve context for NIS evaluation.");
+        return;
+    }
+
+    sl::ViewportHandle view(m_viewport);
+    const sl::BaseStructure* inputs[] = { &view };
+    successCheck(slEvaluateFeature(sl::kFeatureDeepDVC, *m_currentFrame, inputs, _countof(inputs), nativeCommandList), "slEvaluateFeature_DeepDVC");
+
+    //Our pipeline is very simple so we can simply clear it, but normally state tracking should be implemented.
+    commandList->clearState();
+
+}
+
+void SLWrapper::QueryDeepDVCState(uint64_t& estimatedVRamUsage)
+{
+    if (!m_sl_initialised || !m_deepdvc_available) {
+        log::warning("SL not initialised or DeepDVC not available.");
+        return;
+    }
+    sl::DeepDVCState state;
+    successCheck(slDeepDVCGetState(m_viewport, state), "slDeepDVCGetState");
+    estimatedVRamUsage = state.estimatedVRAMUsageInBytes;
+}
+
+
 void SLWrapper::SetReflexConsts(const sl::ReflexOptions options)
 {
     if (!m_sl_initialised || !m_reflex_available)
@@ -1014,43 +1259,57 @@ void SLWrapper::Callback_FrameCount_Reflex_Sleep_Input_SimStart(donut::app::Devi
 
     if (SLWrapper::Get().GetReflexAvailable()) {
         successCheck(slReflexSleep(*SLWrapper::Get().m_currentFrame), "Reflex_Sleep");
-        successCheck(slReflexSetMarker(sl::ReflexMarker::eInputSample, *SLWrapper::Get().m_currentFrame), "Reflex_Input");
-        successCheck(slReflexSetMarker(sl::ReflexMarker::eSimulationStart, *SLWrapper::Get().m_currentFrame), "Reflex_SimStart");
+        
+    }
+    if (SLWrapper::Get().GetPCLAvailable()){
+        successCheck(slPCLSetMarker(sl::PCLMarker::eSimulationStart, *SLWrapper::Get().m_currentFrame), "PCL_SimStart");
     }
 }
 
 void SLWrapper::ReflexCallback_SimEnd(donut::app::DeviceManager& manager) {
-    if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(slReflexSetMarker(sl::ReflexMarker::eSimulationEnd, *SLWrapper::Get().m_currentFrame), "Reflex_SimEnd");
+    if (SLWrapper::Get().GetPCLAvailable())
+    {
+        successCheck(slPCLSetMarker(sl::PCLMarker::eSimulationEnd, *SLWrapper::Get().m_currentFrame), "PCL_SimEnd");
+    }
 }
 
 void SLWrapper::ReflexCallback_RenderStart(donut::app::DeviceManager& manager) {
-    if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(slReflexSetMarker(sl::ReflexMarker::eRenderSubmitStart, *SLWrapper::Get().m_currentFrame), "Reflex_SubmitStart");
+    if (SLWrapper::Get().GetPCLAvailable())
+    {
+        successCheck(slPCLSetMarker(sl::PCLMarker::eRenderSubmitStart, *SLWrapper::Get().m_currentFrame), "PCL_SubmitStart");
+    }
 }
 
 void SLWrapper::ReflexCallback_RenderEnd(donut::app::DeviceManager& manager) {
-    if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(slReflexSetMarker(sl::ReflexMarker::eRenderSubmitEnd, *SLWrapper::Get().m_currentFrame), "Reflex_SubmitEnd");
+    if (SLWrapper::Get().GetPCLAvailable())
+    {
+        successCheck(slPCLSetMarker(sl::PCLMarker::eRenderSubmitEnd, *SLWrapper::Get().m_currentFrame), "PCL_SubmitEnd");
+    }
 }
 
 void SLWrapper::ReflexCallback_PresentStart(donut::app::DeviceManager& manager) {
-    if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(slReflexSetMarker(sl::ReflexMarker::ePresentStart, *SLWrapper::Get().m_currentFrame), "Reflex_PresentStart");
+    if (SLWrapper::Get().GetPCLAvailable())
+    {
+        successCheck(slPCLSetMarker(sl::PCLMarker::ePresentStart, *SLWrapper::Get().m_currentFrame), "PCL_PresentStart");
+    }
 }
 
 void SLWrapper::ReflexCallback_PresentEnd(donut::app::DeviceManager& manager) {
-    if (SLWrapper::Get().GetReflexAvailable())
-        successCheck(slReflexSetMarker(sl::ReflexMarker::ePresentEnd, *SLWrapper::Get().m_currentFrame), "Reflex_PresentEnd");
+    if (SLWrapper::Get().GetPCLAvailable())
+    {
+        successCheck(slPCLSetMarker(sl::PCLMarker::ePresentEnd, *SLWrapper::Get().m_currentFrame), "PCL_PresentEnd");
+    }
 }
 
 void SLWrapper::ReflexTriggerFlash(int frameNumber) {
-    successCheck(slReflexSetMarker(sl::ReflexMarker::eTriggerFlash, *SLWrapper::Get().m_currentFrame), "Reflex_Flash");
+    successCheck(slPCLSetMarker(sl::PCLMarker::eTriggerFlash, *SLWrapper::Get().m_currentFrame), "Reflex_Flash");
 }
 
 void SLWrapper::ReflexTriggerPcPing(int frameNumber) {
-    if (SLWrapper::GetReflexAvailable())
-        successCheck(slReflexSetMarker(sl::ReflexMarker::ePCLatencyPing, *SLWrapper::Get().m_currentFrame), "Reflex_PCPing");
+    if (SLWrapper::Get().GetPCLAvailable())
+    {
+        successCheck(slPCLSetMarker(sl::PCLMarker::ePCLatencyPing, *SLWrapper::Get().m_currentFrame), "PCL_PCPing");
+    }
 }
 
 void SLWrapper::QueryReflexStats(bool& reflex_lowLatencyAvailable, bool& reflex_flashAvailable, std::string& stats) {

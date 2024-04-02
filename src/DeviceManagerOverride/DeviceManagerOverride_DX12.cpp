@@ -660,7 +660,6 @@ void DeviceManagerOverride_DX12::ResizeSwapChain()
 void DeviceManagerOverride_DX12::BeginFrame()
 {
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     bool turn_on;
 
     // STREAMLINE
@@ -668,7 +667,7 @@ void DeviceManagerOverride_DX12::BeginFrame()
 
         waitForQueue();
 
-        SLWrapper::Get().CleanupDLSSG();
+        SLWrapper::Get().CleanupDLSSG(true);
 
         // Get new sizes
         DXGI_SWAP_CHAIN_DESC1 newSwapChainDesc;
@@ -716,11 +715,10 @@ void DeviceManagerOverride_DX12::BeginFrame()
 
     }
     else
-#endif DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     {
         DXGI_SWAP_CHAIN_DESC1 newSwapChainDesc;
         DXGI_SWAP_CHAIN_FULLSCREEN_DESC newFullScreenDesc;
-        if (SUCCEEDED(m_SwapChain_native->GetDesc1(&newSwapChainDesc)) && SUCCEEDED(m_SwapChain_native->GetFullscreenDesc(&newFullScreenDesc)))
+        if (SUCCEEDED(m_SwapChain_proxy->GetDesc1(&newSwapChainDesc)) && SUCCEEDED(m_SwapChain_proxy->GetFullscreenDesc(&newFullScreenDesc)))
         {
             if (m_FullScreenDesc.Windowed != newFullScreenDesc.Windowed)
             {

@@ -1,9 +1,14 @@
-# SL Version 2.2.1
+# SL Version 2.4.0
 
 # StreamlineSample
 
 This project combines Streamline (https://github.com/NVIDIAGameWorks/Streamline) and Donut (https://github.com/NVIDIAGameWorks/donut) to create a sample app demonstrating a Streamline integration.
 
+## Prerequisites
+
+- CMake 3.20+
+- Windows SDK 10.0.22000+
+- Vulkan SDK
 
 ## To get this project setup:
 1. Ensure you have CMake 3.20+ and the vulkan sdk (https://vulkan.lunarg.com) on your system.
@@ -42,3 +47,4 @@ Arguments                                                                       
 -Reflex_mode 1                                                                            | Sets Reflex mode: 1:On 2:Boost
 -Reflex_fpsCap 60                                                                         | Sets Refex FPS cap to a given number
 -DLSS_mode 1                                                                              | Sets the DLSS mode startup: 0:Off 1:MaxPerf 2:Balanced 3:MaxQual 4:UtraPerf 5:DLAA
+-viewport                                                                                 | Specifies backbuffer viewport extent in the format: (offsetLeft,offsetTop,widthxheight) e.g. (320,180,1280x720)

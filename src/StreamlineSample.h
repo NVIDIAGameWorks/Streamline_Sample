@@ -79,9 +79,9 @@ struct ScriptingConfig {
     int DLSS_mode = -1;
     int Reflex_mode = -1;
     int Reflex_fpsCap = -1;
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     int DLSSG_on = -1;
-#endif
+    int DeepDVC_on = -1;
+    sl::Extent viewportExtent{};
 
     ScriptingConfig(int argc, const char* const* argv)
     {
@@ -110,13 +110,23 @@ struct ScriptingConfig {
                 Reflex_fpsCap = std::stoi(argv[++i]);
             }
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
             // DLSSG
             else if (!strcmp(argv[i], "-DLSSG_on"))
             {
                 DLSSG_on = 1;
             }
-#endif
+
+            // DeepDVC
+            else if (!strcmp(argv[i], "-DeepDVC_on"))
+            {
+                DeepDVC_on = 1;
+            }
+
+            else if (!strcmp(argv[i], "-viewport"))
+            {
+                int ret = sscanf(argv[++i], "(%d,%d,%dx%d)", &viewportExtent.left, &viewportExtent.top, &viewportExtent.width, &viewportExtent.height);
+                assert(ret == 4);
+            }
         }
     }
 };
@@ -180,16 +190,27 @@ private:
 
     bool                                            m_presentStarted = false;
 
+    sl::ViewportHandle                              m_viewport{};
+    sl::Extent                                      m_backbufferViewportExtent{};
+
     // Scripting Behavior
     ScriptingConfig                                 m_ScriptingConfig;
 
+    sl::DLSSMode DLSS_Last_Mode = sl::DLSSMode::eOff;
+
 public:
-    StreamlineSample(DeviceManager* deviceManager, UIData& ui, const std::string& sceneName, ScriptingConfig scriptingConfig);
+    StreamlineSample(DeviceManager* deviceManager, sl::ViewportHandle vpHandle, UIData& ui, const std::string& sceneName, ScriptingConfig scriptingConfig);
+    ~StreamlineSample();
 
     // Functions of interest
     bool SetupView();
     void CreateRenderPasses(bool& exposureResetRequired, float lodBias);
     virtual void RenderScene(nvrhi::IFramebuffer* framebuffer) override;
+
+    void SetBackBufferExtent(sl::Extent &backBufferExtent)
+    {
+        m_backbufferViewportExtent = backBufferExtent;
+    }
 
     // Logistic functions 
     std::shared_ptr<TextureCache> GetTextureCache();
@@ -209,4 +230,83 @@ public:
     virtual void SceneLoaded() override;
     virtual void RenderSplashScreen(nvrhi::IFramebuffer* framebuffer) override;
 
+};
+
+struct ViewportData
+{
+    std::shared_ptr<StreamlineSample> m_pSample;
+};
+
+struct MultiViewportApp : public ApplicationBase
+{
+    MultiViewportApp(DeviceManager* deviceManager, UIData& ui, const std::string& sceneName, ScriptingConfig scriptingConfig):
+        Super(deviceManager),
+        m_pDeviceManager(deviceManager),
+        m_ui(ui),
+        m_sceneName(sceneName),
+        m_scripting(scriptingConfig)
+    {
+        m_pViewports.push_back(createViewport());
+        SceneLoaded();
+    }
+
+    std::shared_ptr<ShaderFactory> GetShaderFactory() const { return m_pViewports[0]->m_pSample->GetShaderFactory(); };
+    std::shared_ptr<StreamlineSample> getASample() const { return m_pViewports[0]->m_pSample; }
+
+    virtual void RenderScene(nvrhi::IFramebuffer* framebuffer) override;
+    virtual bool KeyboardUpdate(int key, int scancode, int action, int mods) override
+    {
+        return m_pViewports[0]->m_pSample->KeyboardUpdate(key, scancode, action, mods);
+    }
+    virtual bool MousePosUpdate(double xpos, double ypos) override
+    {
+        return m_pViewports[0]->m_pSample->MousePosUpdate(xpos, ypos);
+    }
+    virtual bool MouseButtonUpdate(int button, int action, int mods) override
+    {
+        return m_pViewports[0]->m_pSample->MouseButtonUpdate(button, action, mods);
+    }
+    virtual bool MouseScrollUpdate(double xoffset, double yoffset) override
+    {
+        return m_pViewports[0]->m_pSample->MouseScrollUpdate(xoffset, yoffset);
+    }
+    virtual void Animate(float fElapsedTimeSeconds) override
+    {
+        for (uint32_t uV = 0; uV < m_pViewports.size(); ++uV)
+        {
+            m_pViewports[uV]->m_pSample->Animate(fElapsedTimeSeconds);
+        }
+    }
+    virtual void SceneUnloading() override
+    {
+        m_pViewports[0]->m_pSample->SceneUnloading();
+    }
+    virtual bool LoadScene(std::shared_ptr<IFileSystem> fs, const std::filesystem::path& fileName) override
+    {
+        return m_pViewports[0]->m_pSample->LoadScene(fs, fileName);
+    }
+    virtual void SceneLoaded() override
+    {
+        Super::SceneLoaded();
+    }
+    virtual void RenderSplashScreen(nvrhi::IFramebuffer* framebuffer) override
+    {
+        m_pViewports[0]->m_pSample->RenderSplashScreen(framebuffer);
+    }
+
+private:
+    typedef ApplicationBase Super;
+    std::shared_ptr<ViewportData> createViewport()
+    {
+        std::shared_ptr<ViewportData> pVp = std::make_shared<ViewportData>();
+        pVp->m_pSample = std::make_shared <StreamlineSample>(
+            m_pDeviceManager, sl::ViewportHandle(m_nViewportsCreated++), m_ui, m_sceneName, m_scripting);
+        return pVp;
+    }
+    uint32_t m_nViewportsCreated = 0;
+    DeviceManager* m_pDeviceManager = nullptr;
+    UIData& m_ui;
+    std::string m_sceneName;
+    ScriptingConfig m_scripting;
+    std::vector<std::shared_ptr<ViewportData>> m_pViewports;
 };

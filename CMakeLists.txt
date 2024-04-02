@@ -39,14 +39,47 @@ if (MSVC)
 endif()
 set(PACKAGE_DIRECTORY "${CMAKE_SOURCE_DIR}/_package")
 
+# Do not install additional libraries
+option(NVRHI_INSTALL "Generate install rules for NVRHI" OFF)
+option(JSONCPP_WITH_CMAKE_PACKAGE "" OFF)
+option(JSONCPP_WITH_PKGCONFIG_SUPPORT "" OFF)
+set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/_extra_install")
+
 # Overide donut options
-option(STREAMLINE_FEATURE_DLSS_SR   "Include DLSS-SR dll"   ON)
-option(STREAMLINE_FEATURE_IMGUI     "Include Imgui dll"     ON)
-option(STREAMLINE_FEATURE_REFLEX    "Include Reflex dll"    ON)
-option(STREAMLINE_FEATURE_NIS       "Include NIS dll"       ON)
-option(STREAMLINE_FEATURE_DLSS_FG   "Include DLSS-FG dll"   ON)
+option(STREAMLINE_FEATURE_DLSS_SR   "Include DLSS-SR dll"           ON)
+option(STREAMLINE_FEATURE_IMGUI     "Include Imgui dll"             ON)
+option(STREAMLINE_FEATURE_NVPERF    "Include NSight Perf SDK dll"   ON)
+option(STREAMLINE_FEATURE_REFLEX    "Include Reflex dll"            ON)
+option(STREAMLINE_FEATURE_NIS       "Include NIS dll"               ON)
+option(STREAMLINE_FEATURE_DLSS_FG   "Include DLSS-FG dll"           ON)
+option(STREAMLINE_FEATURE_DEEPDVC   "Include DEEPDVC dll"           ON)
+
+if(STREAMLINE_FEATURE_DLSS_SR)
+    add_compile_definitions(STREAMLINE_FEATURE_DLSS_SR)
+endif()
+if(STREAMLINE_FEATURE_IMGUI)
+    add_compile_definitions(STREAMLINE_FEATURE_IMGUI)
+endif()
+if(STREAMLINE_FEATURE_NVPERF)
+    add_compile_definitions(STREAMLINE_FEATURE_NVPERF)
+endif()
+if(STREAMLINE_FEATURE_REFLEX)
+    add_compile_definitions(STREAMLINE_FEATURE_REFLEX)
+endif()
+if(STREAMLINE_FEATURE_NIS)
+    add_compile_definitions(STREAMLINE_FEATURE_NIS)
+endif()
+if (STREAMLINE_FEATURE_DLSS_FG)
+    add_compile_definitions(STREAMLINE_FEATURE_DLSS_FG)
+endif()
+if(STREAMLINE_FEATURE_DEEPDVC)
+    add_compile_definitions(STREAMLINE_FEATURE_DEEPDVC)
+endif()
 
 set(STREAMLINE_INSTALL_DIR  "${PACKAGE_DIRECTORY}/_bin" CACHE STRING "Streamline Install Dir")
+
+# Override vulkan dll used by glfw
+add_compile_definitions(_GLFW_VULKAN_LIBRARY="sl.interposer.dll")
 
 # Add libraries
 add_subdirectory(donut)
@@ -135,9 +168,6 @@ if(AMD_AGS)
     endif ()
 endif()
 
-# NDA ONLY DLSS-G DLSS_G Release
-add_compile_definitions(DLSSG_ALLOWED)
-# END NDA ONLY DLSS-G DLSS_G Release
 target_link_libraries(StreamlineSample donut_render donut_app donut_engine streamline)
 set_target_properties(StreamlineSample PROPERTIES FOLDER "Streamline Sample")
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT StreamlineSample)

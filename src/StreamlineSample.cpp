@@ -53,8 +53,14 @@ using namespace donut::render;
 using namespace donut::render;
 
 // Constructor
-StreamlineSample::StreamlineSample(DeviceManager* deviceManager, UIData& ui, const std::string& sceneName, ScriptingConfig scriptingConfig)
+StreamlineSample::StreamlineSample(
+    DeviceManager* deviceManager,
+    sl::ViewportHandle vpHandle,
+    UIData& ui,
+    const std::string& sceneName,
+    ScriptingConfig scriptingConfig)
     : Super(deviceManager)
+    , m_viewport(vpHandle)
     , m_ui(ui)
     , m_BindingCache(deviceManager->GetDevice())
     , m_ScriptingConfig(scriptingConfig)
@@ -63,9 +69,9 @@ StreamlineSample::StreamlineSample(DeviceManager* deviceManager, UIData& ui, con
     m_ui.DLSS_Supported = SLWrapper::Get().GetDLSSAvailable();
     m_ui.REFLEX_Supported = SLWrapper::Get().GetReflexAvailable();
     m_ui.NIS_Supported = SLWrapper::Get().GetNISAvailable();
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+    m_ui.DeepDVC_Supported = SLWrapper::Get().GetDeepDVCAvailable();
     m_ui.DLSSG_Supported = SLWrapper::Get().GetDLSSGAvailable();
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
 
     std::shared_ptr<NativeFileSystem> nativeFS = std::make_shared<NativeFileSystem>();
 
@@ -147,17 +153,22 @@ StreamlineSample::StreamlineSample(DeviceManager* deviceManager, UIData& ui, con
     }
     m_ui.DLSSPresetsReset();
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     if (m_ScriptingConfig.DLSSG_on != -1 && SLWrapper::Get().GetDLSSGAvailable() && SLWrapper::Get().GetReflexAvailable()) {
         if (m_ui.REFLEX_Mode == 0) 
             m_ui.REFLEX_Mode = 1;
         m_ui.DLSSG_mode = sl::DLSSGMode::eOn;
     }
-#endif
 
-
-
+    if (m_ScriptingConfig.DeepDVC_on != -1 && SLWrapper::Get().GetDeepDVCAvailable()) {
+        m_ui.DeepDVC_Mode = sl::DeepDVCMode::eOn;
+    }
 };
+StreamlineSample::~StreamlineSample()
+{
+    SLWrapper::Get().SetViewportHandle(m_viewport);
+    SLWrapper::Get().CleanupDLSS(true);
+    SLWrapper::Get().CleanupDLSSG(false);
+}
 
 // Functions of interest
 
@@ -283,6 +294,36 @@ void StreamlineSample::CreateRenderPasses(bool& exposureResetRequired, float lod
     m_PreviousViewsValid = false;
 }
 
+void MultiViewportApp::RenderScene(nvrhi::IFramebuffer* framebuffer)
+{
+    sl::Extent nullExtent{};
+    uint32_t nViewports = (uint32_t)m_ui.BackBufferExtents.size();
+    nViewports = std::max(1u, nViewports); // can't have 0 viewports
+    for (uint32_t uV = 0; uV < nViewports; ++uV)
+    {
+        bool isExtentValid = uV < m_ui.BackBufferExtents.size() && m_ui.BackBufferExtents[uV].width > 0 && m_ui.BackBufferExtents[uV].height > 0;
+
+        if (!isExtentValid && uV > 0)
+        {
+            // remove invalid viewport
+            m_pViewports.erase(m_pViewports.begin() + uV);
+            --uV;
+            continue;
+        }
+
+        // if we don't have this viewport - create it
+        if (uV >= m_pViewports.size())
+        {
+            m_pViewports.push_back(this->createViewport());
+        }
+
+        m_pViewports[uV]->m_pSample->SetBackBufferExtent(isExtentValid ? m_ui.BackBufferExtents[uV] : nullExtent);
+        m_pViewports[uV]->m_pSample->RenderScene(framebuffer);
+    }
+    // erase all unused viewports
+    m_pViewports.resize(nViewports);
+}
+
 void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
 {
 
@@ -297,7 +338,64 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
     bool exposureResetRequired = false;
     bool needNewPasses = false;
 
-    m_DisplaySize = int2(windowWidth, windowHeight);
+    uint32_t backbufferWidth = framebuffer->getFramebufferInfo().width;
+    uint32_t backbufferHeight = framebuffer->getFramebufferInfo().height;
+
+    // Validate resource extent against full resource size.
+    auto isViewportExtentValid = [](const sl::Extent& resourceExtent, uint32_t resourceWidth, uint32_t resourceHeight, const std::string& resourceExtentSrc) -> bool
+    {   
+        bool validExtent = true;
+        std::stringstream errorMsg{};
+        errorMsg << "Invalid viewport extent input from " << resourceExtentSrc << ", IF optionally specified by the user! Ignoring it.";
+
+        if (resourceExtent.width == 0 || resourceExtent.height == 0)
+        {
+            errorMsg << "One of the extent dimensions (" << resourceWidth << " x " << resourceHeight << ") is incorrectly zero.";
+            validExtent = false;
+        }
+        else if (resourceExtent.width > resourceWidth || resourceExtent.height > resourceHeight)
+        {
+            errorMsg << "Extent size (" << resourceExtent.width << " x " << resourceExtent.height << ") exceeds full resource size (" << resourceWidth << " x " << resourceHeight << ").";
+            validExtent = false;
+        }
+        if (resourceExtent.left >= resourceWidth || resourceExtent.top >= resourceHeight)
+        {
+            errorMsg << "Extent's base offset (" << resourceExtent.left << ", " << resourceExtent.top << ") is >= either of the resource's dimensions ("
+                << resourceWidth << " x " << resourceHeight << ").";
+            validExtent = false;
+        }
+        else if ((resourceExtent.left + resourceExtent.width - 1) >= resourceWidth || (resourceExtent.top + resourceExtent.height - 1) >= resourceHeight)
+        {
+            errorMsg << "Extent region (" << resourceExtent.left << ", " << resourceExtent.top << ", " << resourceExtent.width << " x "
+                << resourceExtent.height << ") overflows full resource size (" << resourceWidth << " x " << resourceHeight << ").";
+            validExtent = false;
+        }
+
+        if (validExtent)
+        {
+            log::info("Using viewport extent: ( %d, %d, %d x %d )", resourceExtent.left, resourceExtent.top, resourceExtent.width, resourceExtent.height);
+        }
+        else
+        {
+            log::warning(errorMsg.str().c_str());
+        }
+
+        return validExtent;
+    };
+
+    sl::Extent nullExtent{};
+    bool validViewportExtent = (m_backbufferViewportExtent != nullExtent);
+    if (validViewportExtent)
+    {
+        m_DisplaySize = int2(m_backbufferViewportExtent.width, m_backbufferViewportExtent.height);
+    }
+    else
+    {
+        m_DisplaySize = int2(windowWidth, windowHeight);
+    }
+
+    SLWrapper::Get().SetViewportHandle(m_viewport);
+
     float lodBias = 0.f;
 
     // RESIZE (from ui)
@@ -311,8 +409,9 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
         m_ui.Resolution.y = windowHeight;
     }
 
+    // DeepDVC VRAM Usage
+    SLWrapper::Get().QueryDeepDVCState(m_ui.DeepDVC_VRAM);
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     // DLSS-G Setup
 
     // Query whether SLWrapper thinks that DLSS-FG is wanted
@@ -332,6 +431,10 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
     auto dlssgConst = sl::DLSSGOptions{};
     dlssgConst.mode = m_ui.DLSSG_mode;
 
+    // Explicitly manage DLSS-G resources in order to prevent stutter when
+    // temporarily disabled.
+    dlssgConst.flags |= sl::DLSSGFlags::eRetainResourcesWhenOff;
+
     // Turn off DLSSG if we are changing the UI
     if (m_ui.MouseOverUI) {
         dlssgConst.mode = sl::DLSSGMode::eOff;
@@ -339,7 +442,7 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
 
     if (m_ui.DLSS_Resolution_Mode == RenderingResolutionMode::DYNAMIC)
     {
-        dlssgConst.flags = sl::DLSSGFlags::eDynamicResolutionEnabled;
+        dlssgConst.flags |= sl::DLSSGFlags::eDynamicResolutionEnabled;
         dlssgConst.dynamicResWidth = m_DisplaySize.x / 2;
         dlssgConst.dynamicResHeight = m_DisplaySize.y / 2;
     }
@@ -379,8 +482,15 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
         m_ui.DLSSG_status = "";
     }
 
+    // After we've actually set DLSS-G on/off, free resources
+    if (m_ui.DLSSG_cleanup_needed)
+    {
+        SLWrapper::Get().CleanupDLSSG(false);
+        m_ui.DLSSG_cleanup_needed = false;
+    }
 
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
+
 
     // REFLEX Setup
 
@@ -406,14 +516,14 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
 
     // Reset DLSS vars if we stop using it
     if (m_ui.DLSS_Last_AA == AntiAliasingMode::DLSS && m_ui.AAMode != AntiAliasingMode::DLSS) {
-        m_ui.DLSS_Last_Mode = sl::DLSSMode::eOff;
+        DLSS_Last_Mode = sl::DLSSMode::eOff;
         m_ui.DLSS_Mode = sl::DLSSMode::eOff;
         m_ui.DLSS_Last_DisplaySize = { 0,0 };
-        SLWrapper::Get().CleanupDLSS(); // We can also expressly tell SL to cleanup DLSS resources.
+        SLWrapper::Get().CleanupDLSS(true); // We can also expressly tell SL to cleanup DLSS resources.
     }
     // If we turn on DLSS then we set its default values
     else if (m_ui.DLSS_Last_AA != AntiAliasingMode::DLSS && m_ui.AAMode == AntiAliasingMode::DLSS) {
-        m_ui.DLSS_Last_Mode = sl::DLSSMode::eBalanced;
+        DLSS_Last_Mode = sl::DLSSMode::eBalanced;
         m_ui.DLSS_Mode = sl::DLSSMode::eBalanced;
         m_ui.DLSS_Last_DisplaySize = { 0,0 };
     }
@@ -442,14 +552,14 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
 
         // Changing presets requires a restart of DLSS
         if (m_ui.DLSSPresetsChanged())
-            SLWrapper::Get().CleanupDLSS();
+            SLWrapper::Get().CleanupDLSS(true);
 
         m_ui.DLSSPresetsUpdate();
 
         SLWrapper::Get().SetDLSSOptions(dlssConstants);
 
         // Check if we need to update the rendertarget size.
-        bool DLSS_resizeRequired = (m_ui.DLSS_Mode != m_ui.DLSS_Last_Mode) || (m_DisplaySize.x != m_ui.DLSS_Last_DisplaySize.x) || (m_DisplaySize.y != m_ui.DLSS_Last_DisplaySize.y);
+        bool DLSS_resizeRequired = (m_ui.DLSS_Mode != DLSS_Last_Mode) || (m_DisplaySize.x != m_ui.DLSS_Last_DisplaySize.x) || (m_DisplaySize.y != m_ui.DLSS_Last_DisplaySize.y);
         if (DLSS_resizeRequired) {
             // Only quality, target width and height matter here
             SLWrapper::Get().QueryDLSSOptimalSettings(m_RecommendedDLSSSettings);
@@ -460,7 +570,7 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
                 m_RenderingRectSize = m_DisplaySize;
             }
             else {
-                m_ui.DLSS_Last_Mode = m_ui.DLSS_Mode;
+                DLSS_Last_Mode = m_ui.DLSS_Mode;
                 m_ui.DLSS_Last_DisplaySize = m_DisplaySize;
             }
         }
@@ -571,7 +681,11 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
     m_RenderTargets->Clear(m_CommandList);
 
     nvrhi::ITexture* framebufferTexture = framebuffer->getDesc().colorAttachments[0].texture;
-    m_CommandList->clearTextureFloat(framebufferTexture, nvrhi::AllSubresources, nvrhi::Color(0.f));
+    // only the very first viewport needs to clear the framebuffer
+    if (m_viewport == 0)
+    {
+        m_CommandList->clearTextureFloat(framebufferTexture, nvrhi::AllSubresources, nvrhi::Color(0.f));
+    }
 
     if (exposureResetRequired)
         m_ToneMappingPass->ResetExposure(m_CommandList, 8.f);
@@ -771,15 +885,13 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
     //
     // DO NIS
     //
-
-    // NIS SETUP
-    auto nisConsts = sl::NISOptions{};
-    nisConsts.mode = m_ui.NIS_Mode;
-    nisConsts.sharpness = m_ui.NIS_Sharpness;
-    SLWrapper::Get().SetNISOptions(nisConsts);
-
-
     if (m_ui.NIS_Mode != sl::NISMode::eOff) {
+
+        // NIS SETUP
+        auto nisConsts = sl::NISOptions{};
+        nisConsts.mode = m_ui.NIS_Mode;
+        nisConsts.sharpness = m_ui.NIS_Sharpness;
+        SLWrapper::Get().SetNISOptions(nisConsts);
 
         // Use PreUI Color
         m_CommandList->copyTexture(m_RenderTargets->NisColor, nvrhi::TextureSlice(), m_RenderTargets->PreUIColor, nvrhi::TextureSlice());
@@ -793,8 +905,51 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
         SLWrapper::Get().EvaluateNIS(m_CommandList);
     }
 
-    // Copy to framebuffer
-    m_CommandList->copyTexture(framebufferTexture, nvrhi::TextureSlice(), m_RenderTargets->PreUIColor, nvrhi::TextureSlice());
+    // TAG STREAMLINE RESOURCES
+    SLWrapper::Get().TagResources_DLSS_FG(m_CommandList, validViewportExtent, m_backbufferViewportExtent);
+
+    //
+    // DO DEEPDVC
+    //
+    if (m_ui.DeepDVC_Mode != sl::DeepDVCMode::eOff) {
+        // DeepDVC SETUP
+        auto deepdvcConsts = sl::DeepDVCOptions{};
+        deepdvcConsts.mode = m_ui.DeepDVC_Mode;
+        deepdvcConsts.intensity = m_ui.DeepDVC_Intensity;
+        deepdvcConsts.saturationBoost = m_ui.DeepDVC_SaturationBoost;
+        SLWrapper::Get().SetDeepDVCOptions(deepdvcConsts);
+
+        // TAG STREAMLINE RESOURCES
+        SLWrapper::Get().TagResources_DeepDVC(m_CommandList,
+            m_View->GetChildView(ViewType::PLANAR, 0),
+            m_RenderTargets->PreUIColor);
+        SLWrapper::Get().EvaluateDeepDVC(m_CommandList);
+    }
+
+    if (validViewportExtent)
+    {
+        // blit to target framebuffer viewport
+        nvrhi::Viewport backBufferViewport
+        {
+            static_cast<float>(m_backbufferViewportExtent.left),
+            static_cast<float>(m_backbufferViewportExtent.left + m_backbufferViewportExtent.width - 1),
+            static_cast<float>(m_backbufferViewportExtent.top),
+            static_cast<float>(m_backbufferViewportExtent.top + m_backbufferViewportExtent.height - 1),
+            0.f,
+            1.f
+        };
+        engine::BlitParameters blitParams{};
+        blitParams.targetFramebuffer = framebuffer;
+        blitParams.targetViewport = backBufferViewport;
+        blitParams.sourceTexture = m_RenderTargets->PreUIColor;
+
+        m_CommonPasses->BlitTexture(m_CommandList, blitParams, &m_BindingCache);
+    }
+    else
+    {
+        // Copy to framebuffer
+        m_CommandList->copyTexture(framebufferTexture, nvrhi::TextureSlice(), m_RenderTargets->PreUIColor, nvrhi::TextureSlice());
+    }
 
     // DEBUG OVERLAY
     if (m_ui.VisualiseBuffers) {

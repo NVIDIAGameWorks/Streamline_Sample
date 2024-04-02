@@ -44,11 +44,7 @@
 // Streamline
 #include<sl.h>
 #include<sl_dlss.h>
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
 #include<sl_dlss_g.h>
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
-
-
 
 /// <summary>
 /// This enum describes the available anti-aliasing modes. These can be toggled from the UI
@@ -81,6 +77,7 @@ struct UIData
     donut::math::int2                   Resolution = { 0,0 };
     bool                                Resolution_changed = false;
     bool                                MouseOverUI = false;
+    std::vector<sl::Extent>             BackBufferExtents{};
 
     // SSAO
     bool                                EnableSsao = true;
@@ -116,7 +113,6 @@ struct UIData
     RenderingResolutionMode             DLSS_Resolution_Mode = RenderingResolutionMode::FIXED;
     bool                                DLSS_Dynamic_Res_change = true;
     donut::math::int2                   DLSS_Last_DisplaySize = { 0,0 };
-    sl::DLSSMode                        DLSS_Last_Mode = sl::DLSSMode::eOff;
     AntiAliasingMode                    DLSS_Last_AA = AntiAliasingMode::NONE;
     bool                                DLSS_DebugShowFullRenderingBuffer = false;
     bool                                DLSS_lodbias_useoveride = false;
@@ -158,6 +154,13 @@ struct UIData
     sl::NISMode                         NIS_Mode = sl::NISMode::eOff;
     float                               NIS_Sharpness = 0.5f;
 
+    // DeepDVC specific parameters
+    bool                                DeepDVC_Supported = false;
+    sl::DeepDVCMode                     DeepDVC_Mode = sl::DeepDVCMode::eOff;
+    float                               DeepDVC_Intensity = 0.5f;
+    float                               DeepDVC_SaturationBoost = 0.75f;
+    uint64_t                            DeepDVC_VRAM = 0;
+
     // LATENCY specific parameters
     bool                                REFLEX_Supported = false;
     bool                                REFLEX_LowLatencyAvailable = false;
@@ -165,13 +168,13 @@ struct UIData
     int                                 REFLEX_CapedFPS = 0;
     std::string                         REFLEX_Stats = "";
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     // DLFG specific parameters
     bool                                DLSSG_Supported = false;
     sl::DLSSGMode                       DLSSG_mode = sl::DLSSGMode::eOff;
     float                               DLSSG_fps = 0;
     size_t                              DLSSG_memory = 0;
     std::string                         DLSSG_status = "";
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+    bool                                DLSSG_cleanup_needed = false;
+
 };
 

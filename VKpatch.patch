@@ -4,7 +4,7 @@ diff --git a/donut/nvrhi/thirdparty/Vulkan-Headers/include/vulkan/vulkan.hpp b/d
 index 61e4955..3751cb9 100644
 --- a/donut/nvrhi/thirdparty/Vulkan-Headers/include/vulkan/vulkan.hpp
 +++ b/donut/nvrhi/thirdparty/Vulkan-Headers/include/vulkan/vulkan.hpp
-@@ -10048,7 +10048,7 @@ namespace VULKAN_HPP_NAMESPACE
+@@ -7345,7 +7345,7 @@ namespace VULKAN_HPP_NAMESPACE
  #  elif defined( __APPLE__ )
          m_library = dlopen( "libvulkan.dylib", RTLD_NOW | RTLD_LOCAL );
  #  elif defined( _WIN32 )
@@ -13,17 +13,3 @@ index 61e4955..3751cb9 100644
  #  else
  #    error unsupported platform
  #  endif
-Submodule thirdparty/glfw contains modified content
-diff --git a/donut/thirdparty/glfw/src/vulkan.c b/donut/thirdparty/glfw/src/vulkan.c
-index 22c54e4a..0839de60 100644
---- a/donut/thirdparty/glfw/src/vulkan.c
-+++ b/donut/thirdparty/glfw/src/vulkan.c
-@@ -54,7 +54,7 @@ GLFWbool _glfwInitVulkan(int mode)
- #if defined(_GLFW_VULKAN_LIBRARY)
-     _glfw.vk.handle = _glfw_dlopen(_GLFW_VULKAN_LIBRARY);
- #elif defined(_GLFW_WIN32)
--    _glfw.vk.handle = _glfw_dlopen("vulkan-1.dll");
-+    _glfw.vk.handle = _glfw_dlopen("sl.interposer.dll");
- #elif defined(_GLFW_COCOA)
-     _glfw.vk.handle = _glfw_dlopen("libvulkan.1.dylib");
-     if (!_glfw.vk.handle)

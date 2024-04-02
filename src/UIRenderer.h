@@ -143,25 +143,18 @@ protected:
         ImGui::Text("Renderer: %s", GetDeviceManager()->GetRendererString());
         double fps = 1.0 / GetDeviceManager()->GetAverageFrameTimeSeconds();
         ImGui::Text("Engine FPS: %.0f ", fps);
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
         if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff ) {
             ImGui::Text("True FPS: %.0f ", m_ui.DLSSG_fps);
         }
-#endif // NDA ONLY DLSS-G DLSS_G Release
-
         // Vsync
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
         if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff && !m_dev_view) {
             pushDisabled();
             m_ui.EnableVsync = false;
         }
-#endif // NDA ONLY DLSS-G DLSS_G Release
         ImGui::Checkbox("VSync", &m_ui.EnableVsync);
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
         if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff && !m_dev_view) {
             popDisabled();
         }
-#endif // NDA ONLY DLSS-G DLSS_G Release
 
         // Resolution 
         std::vector<std::string> Resolutions_strings = { "1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160" };
@@ -194,6 +187,7 @@ protected:
             m_ui.Resolution_changed = true;
         }
 
+        ImGui::Separator();
         ImGui::Checkbox("Developer Menu", &m_dev_view);
 
         if (!m_dev_view) {
@@ -213,15 +207,12 @@ protected:
                 pushDisabled();
                 m_ui.DLSS_Mode = sl::DLSSMode::eOff;
                 m_dev_view_dlss_mode = 0;
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
                 m_ui.DLSSG_mode = sl::DLSSGMode::eOff;
-#endif
                 m_ui.REFLEX_Mode = 0;
                 m_ui.NIS_Mode = sl::NISMode::eOff;
             }
 
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
             
             //
             //  DLSS Frame Gen
@@ -230,10 +221,16 @@ protected:
             ImGui::Text("Frame Generation");
             ImGui::SameLine();
             if (!m_ui.DLSSG_Supported || !m_ui.REFLEX_Supported) pushDisabled();
-            ImGui::Combo("##FrameGeneration", (int*)&m_ui.DLSSG_mode, "Off\0On\0Auto (Dynamic Frame Generation)\0");
+            if (ImGui::Combo("##FrameGeneration", (int*)&m_ui.DLSSG_mode, "Off\0On\0Auto (Dynamic Frame Generation)\0"))
+            {
+                if (m_ui.DLSSG_mode == sl::DLSSGMode::eOff)
+                {
+                    m_ui.DLSSG_cleanup_needed = true;
+                }
+            }
             if (!m_ui.DLSSG_Supported || !m_ui.REFLEX_Supported) popDisabled();
             if (m_ui.DLSSG_status != "") ImGui::Text((std::string("State: ") + m_ui.DLSSG_status).c_str());
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
 
             //
             //  DLSS SuperRes
@@ -312,7 +309,6 @@ protected:
             ImGui::SameLine();
             if (!m_ui.REFLEX_Supported) pushDisabled();
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
             if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff) {
                 auto i = (int)m_ui.REFLEX_Mode - 1;
                 i = i < 0 ? 0 : i;
@@ -320,7 +316,7 @@ protected:
                 m_ui.REFLEX_Mode = i + 1;
             }
             else
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
             ImGui::Combo("##Reflex", (int*)&m_ui.REFLEX_Mode, "Off\0On\0On + Boost\0");
             
             if (ImGui::IsItemHovered()) m_ui.MouseOverUI = true;
@@ -344,6 +340,33 @@ protected:
 
             if (m_dev_view_TopLevelDLSS == 0) popDisabled();
             ImGui::Unindent();
+
+            //
+            //  DeepDVC
+            //
+
+            ImGui::Separator();
+            ImGui::Text("NVIDIA DeepDVC");
+            ImGui::Indent();
+            ImGui::Text("Supported: %s", m_ui.DeepDVC_Supported ? "yes" : "no");
+            if (m_ui.DeepDVC_Supported) {
+                int deeoDVC_mode = m_ui.DeepDVC_Mode == sl::DeepDVCMode::eOn ? 1 : 0;
+                ImGui::Text("DeepDVC Mode");
+                ImGui::SameLine();
+                ImGui::Combo("##DeepDVC Mode", &deeoDVC_mode, "Off\0On\0");
+                m_ui.DeepDVC_Mode = deeoDVC_mode == 1 ? sl::DeepDVCMode::eOn : sl::DeepDVCMode::eOff;
+                if (m_ui.DeepDVC_Mode == sl::DeepDVCMode::eOn)
+                {
+                    ImGui::Text("VRAM = %4.2f MB", m_ui.DeepDVC_VRAM / 1024 / 1024.0f);
+                    ImGui::Text("Intensity");
+                    ImGui::SameLine();
+                    ImGui::DragFloat("##Intensity", &m_ui.DeepDVC_Intensity, 0.01f, 0, 1);
+                    ImGui::Text("Saturation Boost");
+                    ImGui::SameLine();
+                    ImGui::DragFloat("##Saturation Boost", &m_ui.DeepDVC_SaturationBoost, 0.01f, 0, 1);
+                }
+            }
+
 
         }
 
@@ -519,7 +542,6 @@ protected:
             // DLSS Frame Generatioon
             //
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
             ImGui::Separator();
             ImGui::PushStyleColor(ImGuiCol_Text, TITLE_COL);
             ImGui::Text("DLSS-G");
@@ -533,12 +555,18 @@ protected:
                     m_ui.DLSSG_mode = sl::DLSSGMode::eOff;
                 }
                 else {
-                    ImGui::Combo("DLSS-G Mode", (int*)&m_ui.DLSSG_mode, "Off\0On\0Auto (Dynamic Frame Generation)\0");
+                    if (ImGui::Combo("DLSS-G Mode", (int*)&m_ui.DLSSG_mode, "Off\0On\0Auto (Dynamic Frame Generation)\0"))
+                    {
+                        if (m_ui.DLSSG_mode == sl::DLSSGMode::eOff)
+                        {
+                            m_ui.DLSSG_cleanup_needed = true;
+                        }
+                    }
                 }
 
 
             }
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
 
             //
             //  NIS Sharpenning
@@ -677,6 +705,64 @@ protected:
                     ImGui::Unindent();
                 }
 
+                if (m_ui.NIS_Mode == sl::NISMode::eOff)
+                {
+                    // Viewport Extent
+                    ImGui::Separator();
+                    ImGui::PushStyleColor(ImGuiCol_Text, TITLE_COL);
+                    ImGui::Text("Backbuffer Viewport Extent");
+                    ImGui::PopStyleColor();
+
+                    uint32_t nViewports = (uint32_t)m_ui.BackBufferExtents.size();
+                    nViewports = std::max(1u, nViewports); // can't have 0 viewports
+                    std::vector<const char*> nViewports_strings = { "1", "2" };
+                    if (ImGui::BeginCombo("NViewports", nViewports_strings[nViewports - 1]))
+                    {
+                        for (auto i = 0; i < nViewports_strings.size(); ++i)
+                        {
+                            bool is_selected = (i == (nViewports - 1));
+                            if (ImGui::Selectable(nViewports_strings[i], is_selected)) nViewports = i + 1;
+                            if (is_selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    // check if we need to add/remove viewports based on the new selection
+                    if (nViewports == 2)
+                    {
+                        m_ui.BackBufferExtents.resize(2);
+                        m_ui.BackBufferExtents[0].left = 0;
+                        m_ui.BackBufferExtents[0].top = 0;
+                        m_ui.BackBufferExtents[0].width = width / 2;
+                        m_ui.BackBufferExtents[0].height = height / 2;
+                        m_ui.BackBufferExtents[1].left = width / 2;
+                        m_ui.BackBufferExtents[1].top = height / 2;
+                        m_ui.BackBufferExtents[1].width = width / 2;
+                        m_ui.BackBufferExtents[1].height = height / 2;
+                    }
+                    else
+                    {
+                        m_ui.BackBufferExtents.resize(1);
+                        float viewportX{ static_cast<float>(m_ui.BackBufferExtents[0].left) };
+                        float viewportY{ static_cast<float>(m_ui.BackBufferExtents[0].top) };
+                        float viewportW{ static_cast<float>(m_ui.BackBufferExtents[0].width) };
+                        float viewportH{ static_cast<float>(m_ui.BackBufferExtents[0].height) };
+
+                        // ensure values set to the slider are in the valid range.
+                        viewportX = std::clamp(viewportX, 0.f, static_cast<uint32_t>(viewportW) > 1 ? viewportW - 1 : 0);
+                        ImGui::SliderFloat("OffsetLeft", &(viewportX), 0.f, static_cast<uint32_t>(viewportW) > 1 ? viewportW - 1 : 0);
+
+                        viewportY = std::clamp(viewportY, 0.f, static_cast<uint32_t>(viewportH) > 1 ? viewportH - 1 : 0);
+                        ImGui::SliderFloat("OffsetTop", &(viewportY), 0.f, static_cast<uint32_t>(viewportH) > 1 ? viewportH - 1 : 0);
+
+                        viewportW = std::clamp(viewportW, 0.f, static_cast<float>(width - viewportX));
+                        ImGui::SliderFloat("Width", &(viewportW), 0.f, static_cast<float>(width - viewportX));
+
+                        viewportH = std::clamp(viewportH, 0.f, static_cast<float>(height - viewportY));
+                        ImGui::SliderFloat("Height", &(viewportH), 0.f, static_cast<float>(height - viewportY));
+
+                        m_ui.BackBufferExtents[0] = { static_cast<uint32_t>(viewportY), static_cast<uint32_t>(viewportX), static_cast<uint32_t>(viewportW), static_cast<uint32_t>(viewportH) };
+                    }
+                }
 
                 ImGui::Unindent();
 

@@ -52,9 +52,8 @@
 #include <sl_dlss.h>
 #include <sl_reflex.h>
 #include <sl_nis.h>
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
 #include <sl_dlss_g.h>
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+#include <sl_deepdvc.h>
 
 
 static constexpr int APP_ID = 231313132;
@@ -112,17 +111,21 @@ private:
     bool m_nis_available = false;
     sl::NISOptions m_nis_consts{};
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
+    bool m_deepdvc_available = false;
+    sl::DeepDVCOptions m_deepdvc_consts{};
+
+
     bool m_dlssg_available = false;
     bool m_dlssg_triggerswapchainRecreation = false;
     bool m_dlssg_shoudLoad = false;
     sl::DLSSGOptions m_dlssg_consts{};
     sl::DLSSGState m_dlssg_settings{};
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+
 
     bool m_reflex_available = false;
     sl::ReflexOptions m_reflex_consts{};
     bool m_reflex_driverFlashIndicatorEnable = false;
+    bool m_pcl_available = false;
 
     static sl::Resource allocateResourceCallback(const sl::ResourceAllocationDesc* resDesc, void* device);
     static void releaseResourceCallback(sl::Resource* resource, void* device);
@@ -164,11 +167,10 @@ private:
 //    PFun_slReflexSleep* slReflexSleep{};
 //    PFun_slReflexSetOptions* slReflexSetOptions{};
 //
-//#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
-//    // DLSSG specific functions
+////    // DLSSG specific functions
 //    PFun_slDLSSGGetState* slDLSSGGetState{};
 //    PFun_slDLSSGSetOptions* slDLSSGSetOptions{};
-//#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+//
 
 
 public:
@@ -198,6 +200,10 @@ public:
     sl::FeatureRequirements GetFeatureRequirements(sl::Feature feature);
     sl::FeatureVersion GetFeatureVersion(sl::Feature feature);
 
+    void SetViewportHandle(sl::ViewportHandle vpHandle)
+    {
+        m_viewport = vpHandle;
+    }
 
     void SetSLConsts(const sl::Constants& consts);
     void FeatureLoad(sl::Feature feature, const bool turn_on);
@@ -213,7 +219,19 @@ public:
         const donut::engine::IView* view,
         nvrhi::ITexture* output,
         nvrhi::ITexture* input);
+
+    void TagResources_DLSS_FG(
+        nvrhi::ICommandList* commandList,
+        bool validViewportExtent = false,
+        sl::Extent backBufferExtent = {});
     
+    void TagResources_DeepDVC(
+        nvrhi::ICommandList* commandList,
+        const donut::engine::IView* view,
+        nvrhi::ITexture* output);
+
+    void UnTagResources_DeepDVC();
+
     struct DLSSSettings
     {
         donut::math::int2 optimalRenderSize;
@@ -226,15 +244,23 @@ public:
     bool GetDLSSLastEnable() { return m_dlss_consts.mode != sl::DLSSMode::eOff; }
     void QueryDLSSOptimalSettings(DLSSSettings& settings);
     void EvaluateDLSS(nvrhi::ICommandList* commandList);
-    void CleanupDLSS();
+    void CleanupDLSS(bool wfi);
 
     void SetNISOptions(const sl::NISOptions consts);
     bool GetNISAvailable() { return m_nis_available; }
     bool GetNISLastEnable() { return m_nis_consts.mode != sl::NISMode::eOff; }
     void EvaluateNIS(nvrhi::ICommandList* commandList);
-    void CleanupNIS();
+    void CleanupNIS(bool wfi);
+
+    void SetDeepDVCOptions(const sl::DeepDVCOptions consts);
+    bool GetDeepDVCAvailable() { return m_deepdvc_available; }
+    bool GetDeepDVCLastEnable() { return m_deepdvc_consts.mode != sl::DeepDVCMode::eOff; }
+    void QueryDeepDVCState(uint64_t& estimatedVRamUsage);
+    void EvaluateDeepDVC(nvrhi::ICommandList* commandList);
+    void CleanupDeepDVC();
 
     bool GetReflexAvailable() { return m_reflex_available; }
+    bool GetPCLAvailable() const { return m_pcl_available; }
     void SetReflexConsts(const sl::ReflexOptions consts);
     static void Callback_FrameCount_Reflex_Sleep_Input_SimStart(donut::app::DeviceManager& manager);
     static void ReflexCallback_SimEnd(donut::app::DeviceManager& manager);
@@ -249,7 +275,6 @@ public:
     void SetReflexFlashIndicator(bool enabled) {m_reflex_driverFlashIndicatorEnable = enabled; }
     bool GetReflexFlashIndicatorEnable() { return m_reflex_driverFlashIndicatorEnable; }
 
-#ifdef DLSSG_ALLOWED // NDA ONLY DLSS-G DLSS_G Release
     void SetDLSSGOptions(const sl::DLSSGOptions consts);
     bool GetDLSSGAvailable() { return m_dlssg_available; }
     bool GetDLSSGLastEnable() { return m_dlssg_consts.mode != sl::DLSSGMode::eOff; }
@@ -257,7 +282,7 @@ public:
     void Set_DLSSG_SwapChainRecreation(bool on) { m_dlssg_triggerswapchainRecreation = true; m_dlssg_shoudLoad = on; }
     bool Get_DLSSG_SwapChainRecreation(bool& turn_on) const;
     void Quiet_DLSSG_SwapChainRecreation() { m_dlssg_triggerswapchainRecreation = false; }
-    void CleanupDLSSG();
-#endif // DLSSG_ALLOWED END NDA ONLY DLSS-G DLSS_G Release
+    void CleanupDLSSG(bool wfi);
+
 };
 

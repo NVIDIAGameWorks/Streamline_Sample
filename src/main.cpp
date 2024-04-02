@@ -181,6 +181,12 @@ int main(int __argc, const char* const* __argv)
     deviceParams.startFullscreen = false;
     deviceParams.vsyncEnabled = false;
     deviceParams.swapChainFormat = nvrhi::Format::BGRA8_UNORM;
+#ifndef NDEBUG
+    if (api != nvrhi::GraphicsAPI::VULKAN)
+    {
+        deviceParams.enableDebugRuntime = true;
+    }
+#endif
 
     std::string sceneName;
     bool checkSig = true;
@@ -233,12 +239,12 @@ int main(int __argc, const char* const* __argv)
         uiData.EnableVsync = deviceParams.vsyncEnabled;
         uiData.Resolution = donut::math::int2{ (int)deviceParams.backBufferWidth, (int)deviceParams.backBufferHeight };
 
-        std::shared_ptr<StreamlineSample> demo = std::make_shared<StreamlineSample>(deviceManager, uiData, sceneName, scripting);
-        std::shared_ptr<UIRenderer> gui = std::make_shared<UIRenderer>(deviceManager, demo, uiData);
+        std::shared_ptr<MultiViewportApp> pApp = std::make_shared<MultiViewportApp>(deviceManager, uiData, sceneName, scripting);
+        std::shared_ptr<UIRenderer> gui = std::make_shared<UIRenderer>(deviceManager, pApp->getASample(), uiData);
 
-        gui->Init(demo->GetShaderFactory());
+        gui->Init(pApp->GetShaderFactory());
 
-        deviceManager->AddRenderPassToBack(demo.get());
+        deviceManager->AddRenderPassToBack(pApp.get());
         deviceManager->AddRenderPassToBack(gui.get());
 
         deviceManager->RunMessageLoop();
