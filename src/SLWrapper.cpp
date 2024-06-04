@@ -853,6 +853,128 @@ D3D12_RESOURCE_STATES D3D12convertResourceStates(nvrhi::ResourceStates stateBits
     return result;
 }
 
+static inline nvrhi::Object GetNativeCommandList(nvrhi::ICommandList* commandList)
+{
+    if (commandList == nullptr)
+    {
+        log::error("Invalid command list!");
+        return nullptr;
+    }
+
+    if (commandList->getDevice() == nullptr)
+    {
+        log::error("No device available.");
+        return nullptr;
+    }
+
+    nvrhi::ObjectType objType{};
+    switch (commandList->getDevice()->getGraphicsAPI())
+    {
+#ifdef USE_DX11
+    case nvrhi::GraphicsAPI::D3D11:
+        objType = nvrhi::ObjectTypes::D3D11_DeviceContext;
+        break;
+#endif
+
+#ifdef USE_DX12
+    case nvrhi::GraphicsAPI::D3D12:
+        objType = nvrhi::ObjectTypes::D3D12_GraphicsCommandList;
+        break;
+#endif
+
+#ifdef USE_VK
+    case nvrhi::GraphicsAPI::VULKAN:
+        objType = nvrhi::ObjectTypes::VK_CommandBuffer;
+        break;
+#endif
+
+    default:
+        log::error("Unsupported graphics API!");
+        break;
+    }
+
+    return commandList->getNativeObject(objType);
+}
+
+static inline VkImageLayout toVkImageLayout(nvrhi::ResourceStates stateBits)
+{
+    switch (stateBits)
+    {
+    case nvrhi::ResourceStates::Common:
+    case nvrhi::ResourceStates::UnorderedAccess: return VK_IMAGE_LAYOUT_GENERAL;
+    case nvrhi::ResourceStates::ShaderResource: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    case nvrhi::ResourceStates::RenderTarget: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    case nvrhi::ResourceStates::DepthWrite: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    case nvrhi::ResourceStates::DepthRead: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    case nvrhi::ResourceStates::CopyDest:
+    case nvrhi::ResourceStates::ResolveDest: return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    case nvrhi::ResourceStates::CopySource:
+    case nvrhi::ResourceStates::ResolveSource: return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    case nvrhi::ResourceStates::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    default: return VK_IMAGE_LAYOUT_UNDEFINED;
+    }
+}
+
+static void GetSLResource(
+    nvrhi::ICommandList* commandList,
+    sl::Resource& slResource,
+    nvrhi::ITexture* inputTex,
+    const donut::engine::IView* view)
+{
+    if (commandList == nullptr)
+    {
+        log::error("Invalid command list!");
+        return;
+    }
+
+    if (commandList->getDevice() == nullptr)
+    {
+        log::error("No device available.");
+        return;
+    }
+
+    switch (commandList->getDevice()->getGraphicsAPI())
+    {
+#if USE_DX11
+    case nvrhi::GraphicsAPI::D3D11:
+        slResource = sl::Resource{ sl::ResourceType::eTex2d, inputTex->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource), 0 };
+        break;
+#endif
+
+#if USE_DX12
+    case nvrhi::GraphicsAPI::D3D12:
+        slResource = sl::Resource{ sl::ResourceType::eTex2d, inputTex->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource), nullptr, nullptr, static_cast<uint32_t>(D3D12convertResourceStates(inputTex->getDesc().initialState)) };
+        break;
+#endif
+
+#ifdef USE_VK
+    case nvrhi::GraphicsAPI::VULKAN:
+        {
+            nvrhi::TextureSubresourceSet subresources = view->GetSubresources();
+            auto const& desc = inputTex->getDesc();
+            auto const& vkDesc = ((nvrhi::vulkan::Texture*)inputTex)->imageInfo;
+
+            slResource = sl::Resource{ sl::ResourceType::eTex2d, inputTex->getNativeObject(nvrhi::ObjectTypes::VK_Image),
+                inputTex->getNativeObject(nvrhi::ObjectTypes::VK_DeviceMemory),
+                inputTex->getNativeView(nvrhi::ObjectTypes::VK_ImageView, desc.format, subresources),
+                static_cast<uint32_t>(toVkImageLayout(desc.initialState)) };
+            slResource.width = desc.width;
+            slResource.height = desc.height;
+            slResource.nativeFormat = static_cast<uint32_t>(nvrhi::vulkan::convertFormat(desc.format));
+            slResource.mipLevels = desc.mipLevels;
+            slResource.arrayLayers = vkDesc.arrayLayers;
+            slResource.flags = static_cast<uint32_t>(vkDesc.flags);
+            slResource.usage = static_cast<uint32_t>(vkDesc.usage);
+        }
+        break;
+#endif
+
+    default:
+        log::error("Unsupported graphics API.");
+        break;
+    }
+}
+
 void SLWrapper::TagResources_General(
     nvrhi::ICommandList* commandList,
     const donut::engine::IView* view,
@@ -864,64 +986,15 @@ void SLWrapper::TagResources_General(
         log::warning("Streamline not initialised.");
         return;
     }
-    if (m_Device == nullptr) {
-        log::error("No device available.");
-        return;
-    }
-    
+
     sl::Extent renderExtent{ 0, 0, depth->getDesc().width, depth->getDesc().height };
     sl::Extent fullExtent{ 0, 0, finalColorHudless->getDesc().width, finalColorHudless->getDesc().height };
-    sl::Resource motionVectorsResource, depthResource, finalColorHudlessResource;
-    void* cmdbuffer;
+    void* cmdbuffer = GetNativeCommandList(commandList);
+    sl::Resource motionVectorsResource{}, depthResource{}, finalColorHudlessResource{};
 
-#if USE_DX11
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
-    {
-        motionVectorsResource = sl::Resource{ sl::ResourceType::eTex2d, motionVectors->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource), 0 };
-        depthResource = sl::Resource{ sl::ResourceType::eTex2d, depth->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource), 0 };
-        finalColorHudlessResource = sl::Resource{ sl::ResourceType::eTex2d, finalColorHudless->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource), 0 };
-        cmdbuffer = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
-    }
-#endif
-
-#ifdef USE_DX12
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
-    {
-        motionVectorsResource = sl::Resource{ sl::ResourceType::eTex2d, motionVectors->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource), nullptr, nullptr, static_cast<uint32_t>(D3D12convertResourceStates(motionVectors->getDesc().initialState)) };
-        depthResource = sl::Resource{ sl::ResourceType::eTex2d, depth->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource), nullptr, nullptr, static_cast<uint32_t>(D3D12convertResourceStates(depth->getDesc().initialState)) };
-        finalColorHudlessResource = sl::Resource{ sl::ResourceType::eTex2d, finalColorHudless->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource), nullptr, nullptr, static_cast<uint32_t>(D3D12convertResourceStates(finalColorHudless->getDesc().initialState)) };
-        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
-    }
-#endif
-
-#ifdef USE_VK
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
-    {
-        nvrhi::TextureSubresourceSet subresources = view->GetSubresources();
-        auto view = (uint32_t)m_viewport;
-
-        auto rsc_lambda = [this, &subresources, &view](sl::Resource& rsc, nvrhi::ITexture* inp) {
-            auto const& desc = inp->getDesc();
-            auto const& vkDesc = ((nvrhi::vulkan::Texture*)inp)->imageInfo;
-            rsc = sl::Resource{ sl::ResourceType::eTex2d, inp->getNativeObject(nvrhi::ObjectTypes::VK_Image),
-                inp->getNativeObject(nvrhi::ObjectTypes::VK_DeviceMemory),
-                inp->getNativeView(nvrhi::ObjectTypes::VK_ImageView, desc.format, subresources),
-                static_cast<uint32_t>(vkDesc.initialLayout) };
-            rsc.width = desc.width;
-            rsc.height = desc.height;
-            rsc.nativeFormat = static_cast<uint32_t>(nvrhi::vulkan::convertFormat(desc.format));
-            rsc.mipLevels = desc.mipLevels;
-            rsc.arrayLayers = vkDesc.arrayLayers;
-            rsc.flags = static_cast<uint32_t>(vkDesc.flags);
-            rsc.usage = static_cast<uint32_t>(vkDesc.usage);
-        };
-
-        rsc_lambda(motionVectorsResource, motionVectors);
-        rsc_lambda(depthResource, depth);
-        rsc_lambda(finalColorHudlessResource, finalColorHudless);
-        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);
-    }
-#endif
+    GetSLResource(commandList, motionVectorsResource, motionVectors, view);
+    GetSLResource(commandList, depthResource, depth, view);
+    GetSLResource(commandList, finalColorHudlessResource, finalColorHudless, view);
 
     sl::ResourceTag motionVectorsResourceTag = sl::ResourceTag{ &motionVectorsResource, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent };
     sl::ResourceTag depthResourceTag = sl::ResourceTag{ &depthResource, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent };
@@ -942,61 +1015,14 @@ void SLWrapper::TagResources_DLSS_NIS(
         log::warning("Streamline not initialised.");
         return;
     }
-    if (m_Device == nullptr) {
-        log::error("No device available.");
-        return;
-    }
 
     sl::Extent renderExtent{ 0, 0, Input->getDesc().width, Input->getDesc().height };
     sl::Extent fullExtent{ 0, 0, Output->getDesc().width, Output->getDesc().height };
-    sl::Resource outputResource, inputResource;
-    void* cmdbuffer;
+    void* cmdbuffer = GetNativeCommandList(commandList);
+    sl::Resource outputResource{}, inputResource{};
 
-#if USE_DX11
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
-    {
-        outputResource = sl::Resource{ sl::ResourceType::eTex2d, Output->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource), 0 };
-        inputResource = sl::Resource{ sl::ResourceType::eTex2d, Input->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource), 0 };
-        cmdbuffer = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
-    }
-#endif
-
-#ifdef USE_DX12
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
-    {
-        outputResource = sl::Resource{ sl::ResourceType::eTex2d, Output->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource), nullptr, nullptr, static_cast<uint32_t>(D3D12convertResourceStates(Output->getDesc().initialState)) };
-        inputResource = sl::Resource{ sl::ResourceType::eTex2d, Input->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource), nullptr, nullptr, static_cast<uint32_t>(D3D12convertResourceStates(Input->getDesc().initialState)) };
-        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
-    }
-#endif
-
-#ifdef USE_VK
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
-    {
-        nvrhi::TextureSubresourceSet subresources = view->GetSubresources();
-        auto view = (uint32_t)m_viewport;
-
-        auto rsc_lambda = [this, &subresources, &view](sl::Resource& rsc, nvrhi::ITexture* inp) {
-            auto const& desc = inp->getDesc();
-            auto const& vkDesc = ((nvrhi::vulkan::Texture*)inp)->imageInfo;
-            rsc = sl::Resource{ sl::ResourceType::eTex2d, inp->getNativeObject(nvrhi::ObjectTypes::VK_Image),
-                inp->getNativeObject(nvrhi::ObjectTypes::VK_DeviceMemory),
-                inp->getNativeView(nvrhi::ObjectTypes::VK_ImageView, desc.format, subresources),
-                static_cast<uint32_t>(vkDesc.initialLayout) };
-            rsc.width = desc.width;
-            rsc.height = desc.height;
-            rsc.nativeFormat = static_cast<uint32_t>(nvrhi::vulkan::convertFormat(desc.format));
-            rsc.mipLevels = desc.mipLevels;
-            rsc.arrayLayers = vkDesc.arrayLayers;
-            rsc.flags = static_cast<uint32_t>(vkDesc.flags);
-            rsc.usage = static_cast<uint32_t>(vkDesc.usage);
-        };
-
-        rsc_lambda(outputResource, Output);
-        rsc_lambda(inputResource, Input);
-        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);
-    }
-#endif
+    GetSLResource(commandList, outputResource, Output, view);
+    GetSLResource(commandList, inputResource, Input, view);
 
     sl::ResourceTag inputResourceTag = sl::ResourceTag{ &inputResource, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent };
     sl::ResourceTag outputResourceTag = sl::ResourceTag{ &outputResource, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
@@ -1016,33 +1042,8 @@ void SLWrapper::TagResources_DLSS_FG(
         log::warning("Streamline not initialised.");
         return;
     }
-    if (m_Device == nullptr) {
-        log::error("No device available.");
-        return;
-    }
 
-    void* cmdbuffer{};
-
-#if USE_DX11
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
-    {
-        cmdbuffer = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
-    }
-#endif
-
-#ifdef USE_DX12
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
-    {
-        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
-    }
-#endif
-
-#ifdef USE_VK
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
-    {
-        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);
-    }
-#endif
+    void* cmdbuffer = GetNativeCommandList(commandList);
 
     // tag backbuffer resource mainly to pass extent data and therefore resource can be nullptr.
     // If the viewport extent is invalid - set extent to null. This informs streamline that full resource extent needs to be used
@@ -1060,57 +1061,13 @@ void SLWrapper::TagResources_DeepDVC(
         log::warning("Streamline not initialised.");
         return;
     }
-    if (m_Device == nullptr) {
-        log::error("No device available.");
-        return;
-    }
 
     sl::Extent fullExtent{ 0, 0, Output->getDesc().width, Output->getDesc().height };
-    sl::Resource outputResource;
-    void* cmdbuffer;
+    void* cmdbuffer = GetNativeCommandList(commandList);
+    sl::Resource outputResource{};
 
-#if USE_DX11
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D11)
-    {
-        outputResource = sl::Resource{ sl::ResourceType::eTex2d, Output->getNativeObject(nvrhi::ObjectTypes::D3D11_Resource), 0 };
-        cmdbuffer = m_Device->getNativeObject(nvrhi::ObjectTypes::D3D11_DeviceContext);
-    }
-#endif
+    GetSLResource(commandList, outputResource, Output, view);
 
-#ifdef USE_DX12
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
-    {
-        outputResource = sl::Resource{ sl::ResourceType::eTex2d, Output->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource), nullptr, nullptr, static_cast<uint32_t>(D3D12convertResourceStates(Output->getDesc().initialState)) };
-        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList);
-    }
-#endif
-
-#ifdef USE_VK
-    if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
-    {
-        nvrhi::TextureSubresourceSet subresources = view->GetSubresources();
-        auto view = (uint32_t)m_viewport;
-
-        auto rsc_lambda = [this, &subresources, &view](sl::Resource& rsc, nvrhi::ITexture* inp) {
-            auto const& desc = inp->getDesc();
-            auto const& vkDesc = ((nvrhi::vulkan::Texture*)inp)->imageInfo;
-            rsc = sl::Resource{ sl::ResourceType::eTex2d, inp->getNativeObject(nvrhi::ObjectTypes::VK_Image),
-                inp->getNativeObject(nvrhi::ObjectTypes::VK_DeviceMemory),
-                inp->getNativeView(nvrhi::ObjectTypes::VK_ImageView, desc.format, subresources),
-                static_cast<uint32_t>(vkDesc.initialLayout) };
-            rsc.width = desc.width;
-            rsc.height = desc.height;
-            rsc.nativeFormat = static_cast<uint32_t>(nvrhi::vulkan::convertFormat(desc.format));
-            rsc.mipLevels = desc.mipLevels;
-            rsc.arrayLayers = vkDesc.arrayLayers;
-            rsc.flags = static_cast<uint32_t>(vkDesc.flags);
-            rsc.usage = static_cast<uint32_t>(vkDesc.usage);
-            };
-
-        rsc_lambda(outputResource, Output);
-        cmdbuffer = commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);
-    }
-#endif
     sl::ResourceTag outputResourceTag = sl::ResourceTag{ &outputResource, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
     sl::ResourceTag inputs[] = { outputResourceTag };

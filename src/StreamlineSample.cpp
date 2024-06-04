@@ -893,8 +893,13 @@ void StreamlineSample::RenderScene(nvrhi::IFramebuffer* framebuffer)
         nisConsts.sharpness = m_ui.NIS_Sharpness;
         SLWrapper::Get().SetNISOptions(nisConsts);
 
-        // Use PreUI Color
+        // Use PreUI Color and restore resources state after copy
         m_CommandList->copyTexture(m_RenderTargets->NisColor, nvrhi::TextureSlice(), m_RenderTargets->PreUIColor, nvrhi::TextureSlice());
+        auto NISDesc = m_RenderTargets->NisColor->getDesc();
+        auto PreUIColorDesc = m_RenderTargets->PreUIColor->getDesc();
+        m_CommandList->setTextureState(m_RenderTargets->NisColor, nvrhi::AllSubresources, NISDesc.initialState);
+        m_CommandList->setTextureState(m_RenderTargets->PreUIColor, nvrhi::AllSubresources, PreUIColorDesc.initialState);
+        m_CommandList->commitBarriers();
 
         // TAG STREAMLINE RESOURCES
         SLWrapper::Get().TagResources_DLSS_NIS(m_CommandList,
