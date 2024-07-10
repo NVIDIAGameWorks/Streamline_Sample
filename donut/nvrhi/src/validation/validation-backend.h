@@ -23,7 +23,7 @@
 #pragma once
 
 #include <nvrhi/validation.h>
-#include <bitset>
+#include "../common/sparse-bitset.h"
 
 namespace nvrhi::validation
 {
@@ -41,10 +41,10 @@ namespace nvrhi::validation
 
     struct ShaderBindingSet
     {
-        std::bitset<128> SRV;
-        std::bitset<128> Sampler;
-        std::bitset<16> UAV;
-        std::bitset<16> CB;
+        sparse_bitset SRV;
+        sparse_bitset Sampler;
+        sparse_bitset UAV;
+        sparse_bitset CB;
         uint32_t numVolatileCBs = 0;
         Range rangeSRV;
         Range rangeSampler;
@@ -169,7 +169,8 @@ namespace nvrhi::validation
         void setGraphicsState(const GraphicsState& state) override;
         void draw(const DrawArguments& args) override;
         void drawIndexed(const DrawArguments& args) override;
-        void drawIndirect(uint32_t offsetBytes) override;
+        void drawIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
+        void drawIndexedIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
 
         void setComputeState(const ComputeState& state) override;
         void dispatch(uint32_t groupsX, uint32_t groupsY = 1, uint32_t groupsZ = 1) override;
@@ -181,6 +182,7 @@ namespace nvrhi::validation
         void setRayTracingState(const rt::State& state) override;
         void dispatchRays(const rt::DispatchRaysArguments& args) override;
 
+        void buildOpacityMicromap(rt::IOpacityMicromap* omm, const rt::OpacityMicromapDesc& desc) override;
         void buildBottomLevelAccelStruct(rt::IAccelStruct* as, const rt::GeometryDesc* pGeometries, size_t numGeometries, rt::AccelStructBuildFlags buildFlags) override;
         void compactBottomLevelAccelStructs() override;
         void buildTopLevelAccelStruct(rt::IAccelStruct* as, const rt::InstanceDesc* pInstances, size_t numInstances, rt::AccelStructBuildFlags buildFlags) override;
@@ -233,7 +235,7 @@ namespace nvrhi::validation
         void error(const std::string& messageText) const;
         void warning(const std::string& messageText) const;
 
-        bool validateBindingSetItem(const BindingSetItem& binding, bool isDescriptorTable, std::stringstream& errorStream) const;
+        bool validateBindingSetItem(const BindingSetItem& binding, bool isDescriptorTable, std::stringstream& errorStream);
         bool validatePipelineBindingLayouts(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& bindingLayouts, const std::vector<IShader*>& shaders, GraphicsAPI api) const;
         bool validateShaderType(ShaderType expected, const ShaderDesc& shaderDesc, const char* function) const;
         bool validateRenderState(const RenderState& renderState, IFramebuffer* fb) const;
@@ -308,6 +310,7 @@ namespace nvrhi::validation
         void resizeDescriptorTable(IDescriptorTable* descriptorTable, uint32_t newSize, bool keepContents = true) override;
         bool writeDescriptorTable(IDescriptorTable* descriptorTable, const BindingSetItem& item) override;
 
+        rt::OpacityMicromapHandle createOpacityMicromap(const rt::OpacityMicromapDesc& desc)  override;
         rt::AccelStructHandle createAccelStruct(const rt::AccelStructDesc& desc) override;
         MemoryRequirements getAccelStructMemoryRequirements(rt::IAccelStruct* as) override;
         bool bindAccelStructMemory(rt::IAccelStruct* as, IHeap* heap, uint64_t offset) override;

@@ -319,8 +319,12 @@ bool GltfImporter::Load(
         }
         else
         {
+            // Decode %-encoded characters in the URI, because cgltf doesn't do that for some reason.
+            std::string uri = activeImage->uri;
+            cgltf_decode_uri(uri.data());
+
             // No inline data - read a file.
-            std::filesystem::path filePath = fileName.parent_path() / activeImage->uri;
+            std::filesystem::path filePath = fileName.parent_path() / uri;
 
             // Try to replace the texture with DDS, if enabled.
             if (c_SearchForDds && !ddsImage)
@@ -1132,9 +1136,10 @@ bool GltfImporter::Load(
                 cgltf_accessor_read_float(src->skin->inverse_bind_matrices, joint_idx, joint.inverseBindMatrix.m_data, 16);
                 joint.node = nodeMap[src->skin->joints[joint_idx]];
 
-                if (!joint.node->GetLeaf())
+                auto jointNode = joint.node.lock();
+                if (!jointNode->GetLeaf())
                 {
-                    joint.node->SetLeaf(std::make_shared<SkinnedMeshReference>(skinnedInstance));
+                    jointNode->SetLeaf(std::make_shared<SkinnedMeshReference>(skinnedInstance));
                 }
             }
 

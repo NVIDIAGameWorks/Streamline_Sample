@@ -52,7 +52,8 @@ namespace nvrhi::vulkan
         m_Context.device.getBufferMemoryRequirements(buffer->buffer, &memRequirements);
 
         // allocate memory
-        const vk::Result res = allocateMemory(buffer, memRequirements, pickBufferMemoryProperties(buffer->desc), enableDeviceAddress);
+        const bool enableMemoryExport = (buffer->desc.sharedResourceFlags & SharedResourceFlags::Shared) != 0;
+        const vk::Result res = allocateMemory(buffer, memRequirements, pickBufferMemoryProperties(buffer->desc), enableDeviceAddress, enableMemoryExport, nullptr, buffer->buffer);
         CHECK_VK_RETURN(res)
 
         m_Context.device.bindBufferMemory(buffer->buffer, buffer->memory, 0);
@@ -73,7 +74,9 @@ namespace nvrhi::vulkan
 
         // allocate memory
         const vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal;
-        const vk::Result res = allocateMemory(texture, memRequirements, memProperties);
+        const bool enableDeviceAddress = false;
+        const bool enableMemoryExport = (texture->desc.sharedResourceFlags & SharedResourceFlags::Shared) != 0;
+        const vk::Result res = allocateMemory(texture, memRequirements, memProperties, enableDeviceAddress, enableMemoryExport, texture->image, nullptr);
         CHECK_VK_RETURN(res)
 
         m_Context.device.bindImageMemory(texture->image, texture->memory, 0);
@@ -89,7 +92,10 @@ namespace nvrhi::vulkan
     vk::Result VulkanAllocator::allocateMemory(MemoryResource *res,
                                                vk::MemoryRequirements memRequirements,
                                                vk::MemoryPropertyFlags memPropertyFlags,
-                                                bool enableDeviceAddress) const
+                                                bool enableDeviceAddress,
+                                                bool enableExportMemory,
+                                                VkImage dedicatedImage,
+                                                VkBuffer dedicatedBuffer) const
     {
         res->managed = true;
 
@@ -117,11 +123,38 @@ namespace nvrhi::vulkan
         auto allocFlags = vk::MemoryAllocateFlagsInfo();
         if (enableDeviceAddress)
             allocFlags.flags |= vk::MemoryAllocateFlagBits::eDeviceAddress;
+        const void* pNext = &allocFlags;
+
+        auto dedicatedAllocation = vk::MemoryDedicatedAllocateInfo()
+            .setImage(dedicatedImage)
+            .setBuffer(dedicatedBuffer)
+            .setPNext(pNext);
+
+        if (dedicatedImage || dedicatedBuffer)
+        {
+            // Append the VkMemoryDedicatedAllocateInfo structure to the chain
+            pNext = &dedicatedAllocation;
+        }
+
+#ifdef _WIN32
+        const auto handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+#else
+        const auto handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+#endif
+        auto exportInfo = vk::ExportMemoryAllocateInfo()
+            .setHandleTypes(handleType)
+            .setPNext(pNext);
+
+        if(enableExportMemory)
+        {
+            // Append the VkExportMemoryAllocateInfo structure to the chain
+            pNext = &exportInfo;
+        }
 
         auto allocInfo = vk::MemoryAllocateInfo()
                             .setAllocationSize(memRequirements.size)
-                            .setMemoryTypeIndex(memTypeIndex);
-        allocInfo.setPNext(&allocFlags);
+                            .setMemoryTypeIndex(memTypeIndex)
+                            .setPNext(pNext);
 
         return m_Context.device.allocateMemory(&allocInfo, m_Context.allocationCallbacks, &res->memory);
     }

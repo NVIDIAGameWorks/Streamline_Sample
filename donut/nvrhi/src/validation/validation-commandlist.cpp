@@ -388,7 +388,11 @@ namespace nvrhi::validation
             anyErrors = true;
         }
 
-        if (dstDesc.width >> dstSR.baseMipLevel != srcDesc.width >> srcSR.baseMipLevel || dstDesc.height >> dstSR.baseMipLevel != srcDesc.height >> srcSR.baseMipLevel)
+        const uint32_t srcMipWidth = std::max(srcDesc.width >> srcSR.baseMipLevel, 1u);
+        const uint32_t srcMipHeight = std::max(srcDesc.height >> srcSR.baseMipLevel, 1u);
+        const uint32_t dstMipWidth = std::max(dstDesc.width >> dstSR.baseMipLevel, 1u);
+        const uint32_t dstMipHeight = std::max(dstDesc.height >> dstSR.baseMipLevel, 1u);
+        if (srcMipWidth != dstMipWidth || srcMipHeight != dstMipHeight)
         {
             error("resolveTexture: referenced mip levels of source and destination textures must have the same dimensions");
             anyErrors = true;
@@ -585,12 +589,18 @@ namespace nvrhi::validation
 
             if (!vb.buffer)
             {
-                ss << "Vertex buffer in slot " << index << " is NULL." << std::endl;
+                ss << "Vertex buffer at index " << index << " is NULL." << std::endl;
                 anyErrors = true;
             }
             else if (!vb.buffer->getDesc().isVertexBuffer)
             {
                 ss << "Buffer '" << utils::DebugNameToString(vb.buffer->getDesc().debugName) << "' bound to vertex buffer slot " << index << " cannot be used as a vertex buffer because it does not have the isVertexBuffer flag set." << std::endl;
+                anyErrors = true;
+            }
+
+            if (vb.slot >= c_MaxVertexAttributes)
+            {
+                ss << "Vertex buffer binding at index " << index << " uses an invalid slot " << vb.slot << "." << std::endl;
                 anyErrors = true;
             }
         }
@@ -613,7 +623,7 @@ namespace nvrhi::validation
         if (state.framebuffer->getFramebufferInfo() != state.pipeline->getFramebufferInfo())
         {
             ss << "The framebuffer used in the draw call does not match the framebuffer used to create the pipeline." << std::endl <<
-                "Width, height, and formats of the framebuffers must match." << std::endl;
+                "Formats and sample counts of the framebuffers must match." << std::endl;
             anyErrors = true;
         }
 
@@ -683,7 +693,7 @@ namespace nvrhi::validation
         m_CommandList->drawIndexed(args);
     }
 
-    void CommandListWrapper::drawIndirect(uint32_t offsetBytes)
+    void CommandListWrapper::drawIndirect(uint32_t offsetBytes, uint32_t drawCount)
     {
         if (!requireOpenState())
             return;
@@ -698,10 +708,43 @@ namespace nvrhi::validation
             return;
         }
 
+        if (!m_CurrentGraphicsState.indirectParams)
+        {
+            error("Indirect params buffer is not set before a drawIndirect call.");
+            return;
+        }
+
         if (!validatePushConstants("graphics", "setGraphicsState"))
             return;
 
-        m_CommandList->drawIndirect(offsetBytes);
+        m_CommandList->drawIndirect(offsetBytes, drawCount);
+    }
+
+    void CommandListWrapper::drawIndexedIndirect(uint32_t offsetBytes, uint32_t drawCount)
+    {
+        if (!requireOpenState())
+            return;
+
+        if (!requireType(CommandQueue::Graphics, "drawIndexedIndirect"))
+            return;
+
+        if (!m_GraphicsStateSet)
+        {
+            error("Graphics state is not set before a drawIndexedIndirect call.\n"
+                "Note that setting compute state invalidates the graphics state.");
+            return;
+        }
+
+        if (!m_CurrentGraphicsState.indirectParams)
+        {
+            error("Indirect params buffer is not set before a drawIndexedIndirect call.");
+            return;
+        }
+
+        if (!validatePushConstants("graphics", "setGraphicsState"))
+            return;
+
+        m_CommandList->drawIndexedIndirect(offsetBytes, drawCount);
     }
 
     void CommandListWrapper::setComputeState(const ComputeState& state)
@@ -1084,6 +1127,17 @@ namespace nvrhi::validation
             return;
 
         m_CommandList->compactBottomLevelAccelStructs();
+    }
+
+    void CommandListWrapper::buildOpacityMicromap(rt::IOpacityMicromap* omm, const rt::OpacityMicromapDesc& desc) 
+    {
+        if (!requireOpenState())
+            return;
+
+        if (!requireType(CommandQueue::Compute, "buildOpacityMicromap"))
+            return;
+
+        m_CommandList->buildOpacityMicromap(omm, desc);
     }
 
     void CommandListWrapper::buildBottomLevelAccelStruct(rt::IAccelStruct* as, const rt::GeometryDesc* pGeometries, size_t numGeometries, rt::AccelStructBuildFlags buildFlags)
@@ -1526,6 +1580,8 @@ namespace nvrhi::validation
 
             if (!validateBuildTopLevelAccelStruct(wrapper, numInstances, buildFlags))
                 return;
+
+            const bool allowEmptyInstances = (buildFlags & rt::AccelStructBuildFlags::AllowEmptyInstances) != 0;
             
             for (size_t i = 0; i < numInstances; i++)
             {
@@ -1533,11 +1589,18 @@ namespace nvrhi::validation
 
                 if (instance.bottomLevelAS == nullptr)
                 {
-                    std::stringstream ss;
-                    ss << "TLAS " << utils::DebugNameToString(as->getDesc().debugName) << " build instance " << i
-                        << " has a NULL bottomLevelAS";
-                    error(ss.str());
-                    return;
+                    if (allowEmptyInstances)
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        std::stringstream ss;
+                        ss << "TLAS " << utils::DebugNameToString(as->getDesc().debugName) << " build instance " << i
+                            << " has a NULL bottomLevelAS";
+                        error(ss.str());
+                        return;
+                    }
                 }
 
                 AccelStructWrapper* blasWrapper = dynamic_cast<AccelStructWrapper*>(instance.bottomLevelAS);
@@ -1562,7 +1625,7 @@ namespace nvrhi::validation
                     }
                 }
 
-                if (instance.instanceMask == 0)
+                if (instance.instanceMask == 0 && !allowEmptyInstances)
                 {
                     std::stringstream ss;
                     ss << "TLAS " << utils::DebugNameToString(as->getDesc().debugName) << " build instance " << i

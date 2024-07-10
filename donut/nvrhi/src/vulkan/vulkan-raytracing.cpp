@@ -35,7 +35,37 @@ namespace nvrhi::vulkan
         return vk::DeviceOrHostAddressConstKHR().setDeviceAddress(buffer->deviceAddress + size_t(offset));
     }
 
-    static void convertBottomLevelGeometry(const rt::GeometryDesc& src, vk::AccelerationStructureGeometryKHR& dst,
+    static vk::DeviceOrHostAddressKHR getMutableBufferAddress(IBuffer* _buffer, uint64_t offset)
+    {
+        if (!_buffer)
+            return vk::DeviceOrHostAddressKHR();
+
+        Buffer* buffer = checked_cast<Buffer*>(_buffer);
+
+        return vk::DeviceOrHostAddressKHR().setDeviceAddress(buffer->deviceAddress + size_t(offset));
+    }
+
+    static vk::BuildMicromapFlagBitsEXT GetAsVkBuildMicromapFlagBitsEXT(rt::OpacityMicromapBuildFlags flags)
+    {
+        assert((flags & (rt::OpacityMicromapBuildFlags::FastBuild | rt::OpacityMicromapBuildFlags::FastTrace)) == flags);
+        static_assert((uint32_t)vk::BuildMicromapFlagBitsEXT::ePreferFastTrace == (uint32_t)rt::OpacityMicromapBuildFlags::FastTrace);
+        static_assert((uint32_t)vk::BuildMicromapFlagBitsEXT::ePreferFastBuild == (uint32_t)rt::OpacityMicromapBuildFlags::FastBuild);
+        return (vk::BuildMicromapFlagBitsEXT)flags;
+    }
+
+    static const vk::MicromapUsageEXT* GetAsVkOpacityMicromapUsageCounts(const rt::OpacityMicromapUsageCount* counts) 
+    {
+        static_assert(sizeof(rt::OpacityMicromapUsageCount) == sizeof(vk::MicromapUsageEXT));
+        static_assert(offsetof(rt::OpacityMicromapUsageCount, count) == offsetof(vk::MicromapUsageEXT, count));
+        static_assert(sizeof(rt::OpacityMicromapUsageCount::count) == sizeof(vk::MicromapUsageEXT::count));
+        static_assert(offsetof(rt::OpacityMicromapUsageCount, subdivisionLevel) == offsetof(vk::MicromapUsageEXT, subdivisionLevel));
+        static_assert(sizeof(rt::OpacityMicromapUsageCount::subdivisionLevel) == sizeof(vk::MicromapUsageEXT::subdivisionLevel));
+        static_assert(offsetof(rt::OpacityMicromapUsageCount, format) == offsetof(vk::MicromapUsageEXT, format));
+        static_assert(sizeof(rt::OpacityMicromapUsageCount::format) == sizeof(vk::MicromapUsageEXT::format));
+        return (vk::MicromapUsageEXT*)counts;
+    }
+
+    static void convertBottomLevelGeometry(const rt::GeometryDesc& src, vk::AccelerationStructureGeometryKHR& dst, vk::AccelerationStructureTrianglesOpacityMicromapEXT& dstOmm,
         uint32_t& maxPrimitiveCount, vk::AccelerationStructureBuildRangeInfoKHR* pRange, const VulkanContext& context)
     {
         switch (src.geometryType)
@@ -68,7 +98,7 @@ namespace nvrhi::vulkan
                 break;
             }
 
-            dstt.setVertexFormat(convertFormat(srct.vertexFormat));
+            dstt.setVertexFormat(vk::Format(convertFormat(srct.vertexFormat)));
             dstt.setVertexData(getBufferAddress(srct.vertexBuffer, srct.vertexOffset));
             dstt.setVertexStride(srct.vertexStride);
             dstt.setMaxVertex(std::max(srct.vertexCount, 1u) - 1u);
@@ -77,6 +107,22 @@ namespace nvrhi::vulkan
             if (src.useTransform)
             {
                 dstt.setTransformData(vk::DeviceOrHostAddressConstKHR().setHostAddress(&src.transform));
+            }
+
+            if (srct.opacityMicromap)
+            {
+                OpacityMicromap* om = checked_cast<OpacityMicromap*>(srct.opacityMicromap);
+
+                dstOmm
+                    .setIndexType(srct.ommIndexFormat == Format::R16_UINT ? vk::IndexType::eUint16 : vk::IndexType::eUint32)
+                    .setIndexBuffer(getMutableBufferAddress(srct.ommIndexBuffer, srct.ommIndexBufferOffset).deviceAddress)
+                    .setIndexStride(srct.ommIndexFormat == Format::R16_UINT ? 2 : 4)
+                    .setBaseTriangle(0)
+                    .setPUsageCounts(GetAsVkOpacityMicromapUsageCounts(srct.pOmmUsageCounts))
+                    .setUsageCountsCount(srct.numOmmUsageCounts)
+                    .setMicromap(om->opacityMicromap.get());
+
+                dstt.setPNext(&dstOmm);
             }
 
             maxPrimitiveCount = (srct.indexFormat == Format::UNKNOWN)
@@ -117,6 +163,46 @@ namespace nvrhi::vulkan
         dst.setFlags(geometryFlags);
     }
 
+    rt::OpacityMicromapHandle Device::createOpacityMicromap(const rt::OpacityMicromapDesc& desc)
+    {
+        auto buildSize = vk::MicromapBuildSizesInfoEXT();
+
+        auto buildInfo = vk::MicromapBuildInfoEXT()
+            .setType(vk::MicromapTypeEXT::eOpacityMicromap)
+            .setFlags(GetAsVkBuildMicromapFlagBitsEXT(desc.flags))
+            .setMode(vk::BuildMicromapModeEXT::eBuild)
+            .setPUsageCounts(GetAsVkOpacityMicromapUsageCounts(desc.counts.data()))
+            .setUsageCountsCount((uint32_t)desc.counts.size())
+            ;
+
+        m_Context.device.getMicromapBuildSizesEXT(vk::AccelerationStructureBuildTypeKHR::eDevice, &buildInfo, &buildSize);
+
+        OpacityMicromap* om = new OpacityMicromap(m_Context);
+        om->desc = desc;
+        om->compacted = false;
+        
+        BufferDesc bufferDesc;
+        bufferDesc.canHaveUAVs = true;
+        bufferDesc.byteSize = buildSize.micromapSize;
+        bufferDesc.initialState = ResourceStates::AccelStructBuildBlas;
+        bufferDesc.keepInitialState = true;
+        bufferDesc.isAccelStructStorage = true;
+        bufferDesc.debugName = desc.debugName;
+        bufferDesc.isVirtual = false;
+        om->dataBuffer = createBuffer(bufferDesc);
+
+        Buffer* buffer = checked_cast<Buffer*>(om->dataBuffer.Get());
+
+        auto create = vk::MicromapCreateInfoEXT()
+            .setType(vk::MicromapTypeEXT::eOpacityMicromap)
+            .setBuffer(buffer->buffer)
+            .setSize(buildSize.micromapSize)
+            .setDeviceAddress(getMutableBufferAddress(buffer, 0).deviceAddress);
+
+        om->opacityMicromap = m_Context.device.createMicromapEXTUnique(create, m_Context.allocationCallbacks);
+        return rt::OpacityMicromapHandle::Create(om);
+    }
+
     rt::AccelStructHandle Device::createAccelStruct(const rt::AccelStructDesc& desc)
     {
         AccelStruct* as = new AccelStruct(m_Context);
@@ -132,6 +218,7 @@ namespace nvrhi::vulkan
         if (isManaged)
         {
             std::vector<vk::AccelerationStructureGeometryKHR> geometries;
+            std::vector<vk::AccelerationStructureTrianglesOpacityMicromapEXT> omms;
             std::vector<uint32_t> maxPrimitiveCounts;
 
             auto buildInfo = vk::AccelerationStructureBuildGeometryInfoKHR();
@@ -150,11 +237,12 @@ namespace nvrhi::vulkan
             else
             {
                 geometries.resize(desc.bottomLevelGeometries.size());
+                omms.resize(desc.bottomLevelGeometries.size());
                 maxPrimitiveCounts.resize(desc.bottomLevelGeometries.size());
 
                 for (size_t i = 0; i < desc.bottomLevelGeometries.size(); i++)
                 {
-                    convertBottomLevelGeometry(desc.bottomLevelGeometries[i], geometries[i], maxPrimitiveCounts[i], nullptr, m_Context);
+                    convertBottomLevelGeometry(desc.bottomLevelGeometries[i],  geometries[i], omms[i], maxPrimitiveCounts[i], nullptr, m_Context);
                 }
 
                 buildInfo.setType(vk::AccelerationStructureTypeKHR::eBottomLevel);
@@ -240,6 +328,67 @@ namespace nvrhi::vulkan
         return bound;
     }
 
+    void CommandList::buildOpacityMicromap(rt::IOpacityMicromap* pOpacityMicromap, const rt::OpacityMicromapDesc& desc)
+    {
+        OpacityMicromap* omm = checked_cast<OpacityMicromap*>(pOpacityMicromap);
+
+        if (m_EnableAutomaticBarriers)
+        {
+            requireBufferState(desc.inputBuffer, ResourceStates::OpacityMicromapBuildInput);
+            requireBufferState(desc.perOmmDescs, ResourceStates::OpacityMicromapBuildInput);
+
+            requireBufferState(omm->dataBuffer, nvrhi::ResourceStates::OpacityMicromapWrite);
+        }
+
+        if (desc.trackLiveness)
+        {
+            m_CurrentCmdBuf->referencedResources.push_back(desc.inputBuffer);
+            m_CurrentCmdBuf->referencedResources.push_back(desc.perOmmDescs);
+            m_CurrentCmdBuf->referencedResources.push_back(omm->dataBuffer);
+        }
+
+        commitBarriers();
+
+        auto buildInfo = vk::MicromapBuildInfoEXT()
+            .setType(vk::MicromapTypeEXT::eOpacityMicromap)
+            .setFlags(GetAsVkBuildMicromapFlagBitsEXT(desc.flags))
+            .setMode(vk::BuildMicromapModeEXT::eBuild)
+            .setDstMicromap(omm->opacityMicromap.get())
+            .setPUsageCounts(GetAsVkOpacityMicromapUsageCounts(desc.counts.data()))
+            .setUsageCountsCount((uint32_t)desc.counts.size())
+            .setData(getBufferAddress(desc.inputBuffer, desc.inputBufferOffset))
+            .setTriangleArray(getBufferAddress(desc.perOmmDescs, desc.perOmmDescsOffset))
+            .setTriangleArrayStride((VkDeviceSize)sizeof(vk::MicromapTriangleEXT))
+            ;
+
+        vk::MicromapBuildSizesInfoEXT buildSize;
+        m_Context.device.getMicromapBuildSizesEXT(vk::AccelerationStructureBuildTypeKHR::eDevice, &buildInfo, &buildSize);
+
+        if (buildSize.buildScratchSize != 0)
+        {
+            Buffer* scratchBuffer = nullptr;
+            uint64_t scratchOffset = 0;
+            uint64_t currentVersion = MakeVersion(m_CurrentCmdBuf->recordingID, m_CommandListParameters.queueType, false);
+
+            bool allocated = m_ScratchManager->suballocateBuffer(buildSize.buildScratchSize, &scratchBuffer, &scratchOffset, nullptr,
+                currentVersion, m_Context.accelStructProperties.minAccelerationStructureScratchOffsetAlignment);
+
+            if (!allocated)
+            {
+                std::stringstream ss;
+                ss << "Couldn't suballocate a scratch buffer for OMM " << utils::DebugNameToString(omm->desc.debugName) << " build. "
+                    "The build requires " << buildSize.buildScratchSize << " bytes of scratch space.";
+
+                m_Context.error(ss.str());
+                return;
+            }
+
+            buildInfo.setScratchData(getMutableBufferAddress(scratchBuffer, scratchOffset));
+        }
+
+        m_CurrentCmdBuf->cmdBuf.buildMicromapsEXT(1, &buildInfo);
+    }
+
     void CommandList::buildBottomLevelAccelStruct(rt::IAccelStruct* _as, const rt::GeometryDesc* pGeometries, size_t numGeometries, rt::AccelStructBuildFlags buildFlags)
     {
         AccelStruct* as = checked_cast<AccelStruct*>(_as);
@@ -251,15 +400,17 @@ namespace nvrhi::vulkan
         }
 
         std::vector<vk::AccelerationStructureGeometryKHR> geometries;
+        std::vector<vk::AccelerationStructureTrianglesOpacityMicromapEXT> omms;
         std::vector<vk::AccelerationStructureBuildRangeInfoKHR> buildRanges;
         std::vector<uint32_t> maxPrimitiveCounts;
         geometries.resize(numGeometries);
+        omms.resize(numGeometries);
         maxPrimitiveCounts.resize(numGeometries);
         buildRanges.resize(numGeometries);
 
         for (size_t i = 0; i < numGeometries; i++)
         {
-            convertBottomLevelGeometry(pGeometries[i], geometries[i], maxPrimitiveCounts[i], &buildRanges[i], m_Context);
+            convertBottomLevelGeometry(pGeometries[i], geometries[i], omms[i], maxPrimitiveCounts[i], &buildRanges[i], m_Context);
 
             const rt::GeometryDesc& src = pGeometries[i];
 
@@ -273,6 +424,8 @@ namespace nvrhi::vulkan
                         requireBufferState(srct.indexBuffer, nvrhi::ResourceStates::AccelStructBuildInput);
                     if (srct.vertexBuffer)
                         requireBufferState(srct.vertexBuffer, nvrhi::ResourceStates::AccelStructBuildInput);
+                    if (OpacityMicromap* om = checked_cast<OpacityMicromap*>(srct.opacityMicromap))
+                        requireBufferState(om->dataBuffer, nvrhi::ResourceStates::AccelStructBuildInput);
                 }
                 break;
             }
@@ -334,6 +487,7 @@ namespace nvrhi::vulkan
             m_Context.rtxMemUtil->PopulateUpdateCommandList(m_CurrentCmdBuf->cmdBuf,
                                                             buildInfos.data(),
                                                             buildRangeArrays.data(),
+                                                            maxPrimArrays.data(),
                                                             (uint32_t)buildInfos.size(),
                                                             buildsToUpdate);
         }
@@ -414,6 +568,9 @@ namespace nvrhi::vulkan
 
     void CommandList::buildTopLevelAccelStructInternal(AccelStruct* as, VkDeviceAddress instanceData, size_t numInstances, rt::AccelStructBuildFlags buildFlags, uint64_t currentVersion)
     {
+        // Remove the internal flag
+        buildFlags = buildFlags & ~rt::AccelStructBuildFlags::AllowEmptyInstances;
+
         const bool performUpdate = (buildFlags & rt::AccelStructBuildFlags::PerformUpdate) != 0;
         if (performUpdate)
         {
@@ -492,7 +649,7 @@ namespace nvrhi::vulkan
     void CommandList::buildTopLevelAccelStruct(rt::IAccelStruct* _as, const rt::InstanceDesc* pInstances, size_t numInstances, rt::AccelStructBuildFlags buildFlags)
     {
         AccelStruct* as = checked_cast<AccelStruct*>(_as);
-        
+
         as->instances.resize(numInstances);
 
         for (size_t i = 0; i < numInstances; i++)
@@ -500,27 +657,33 @@ namespace nvrhi::vulkan
             const rt::InstanceDesc& src = pInstances[i];
             vk::AccelerationStructureInstanceKHR& dst = as->instances[i];
 
-            AccelStruct* blas = checked_cast<AccelStruct*>(src.bottomLevelAS);
+            if (src.bottomLevelAS)
+            {
+                AccelStruct* blas = checked_cast<AccelStruct*>(src.bottomLevelAS);
 #ifdef NVRHI_WITH_RTXMU
-            blas->rtxmuBuffer = m_Context.rtxMemUtil->GetBuffer(blas->rtxmuId);
-            blas->accelStruct = m_Context.rtxMemUtil->GetAccelerationStruct(blas->rtxmuId);
-            blas->accelStructDeviceAddress = m_Context.rtxMemUtil->GetDeviceAddress(blas->rtxmuId);
-            dst.setAccelerationStructureReference(blas->accelStructDeviceAddress);
+                blas->rtxmuBuffer = m_Context.rtxMemUtil->GetBuffer(blas->rtxmuId);
+                blas->accelStruct = m_Context.rtxMemUtil->GetAccelerationStruct(blas->rtxmuId);
+                blas->accelStructDeviceAddress = m_Context.rtxMemUtil->GetDeviceAddress(blas->rtxmuId);
+                dst.setAccelerationStructureReference(blas->accelStructDeviceAddress);
 #else
-            dst.setAccelerationStructureReference(blas->accelStructDeviceAddress);
+                dst.setAccelerationStructureReference(blas->accelStructDeviceAddress);
+
+                if (m_EnableAutomaticBarriers)
+                {
+                    requireBufferState(blas->dataBuffer, nvrhi::ResourceStates::AccelStructBuildBlas);
+                }
 #endif
+            }
+            else // !src.bottomLevelAS
+            {
+                dst.setAccelerationStructureReference(0);
+            }
+
             dst.setInstanceCustomIndex(src.instanceID);
-            dst.setInstanceShaderBindingTableRecordOffset(src.instanceContributionToHitGroupIndex * m_Context.rayTracingPipelineProperties.shaderGroupBaseAlignment);
+            dst.setInstanceShaderBindingTableRecordOffset(src.instanceContributionToHitGroupIndex);
             dst.setFlags(convertInstanceFlags(src.flags));
             dst.setMask(src.instanceMask);
             memcpy(dst.transform.matrix.data(), src.transform, sizeof(float) * 12);
-
-#ifndef NVRHI_WITH_RTXMU
-            if (m_EnableAutomaticBarriers)
-            {
-                requireBufferState(blas->dataBuffer, nvrhi::ResourceStates::AccelStructBuildBlas);
-            }
-#endif
         }
 
 #ifdef NVRHI_WITH_RTXMU
@@ -579,6 +742,12 @@ namespace nvrhi::vulkan
     {
 #ifdef NVRHI_WITH_RTXMU
         bool isManaged = desc.isTopLevel;
+        if (!isManaged && rtxmuId != ~0ull)
+        {
+            std::vector<uint64_t> delAccel = { rtxmuId };
+            m_Context.rtxMemUtil->RemoveAccelerationStructures(delAccel);
+            rtxmuId = ~0ull;
+        }
 #else
         bool isManaged = true;
 #endif
@@ -612,6 +781,31 @@ namespace nvrhi::vulkan
         if (!desc.isTopLevel)
             return m_Context.rtxMemUtil->GetDeviceAddress(rtxmuId);
 #endif
+        return getBufferAddress(dataBuffer, 0).deviceAddress;
+    }
+
+    OpacityMicromap::~OpacityMicromap()
+    {
+    }
+
+    Object OpacityMicromap::getNativeObject(ObjectType objectType)
+    {
+        switch (objectType)
+        {
+        case ObjectTypes::VK_Buffer:
+        case ObjectTypes::VK_DeviceMemory:
+            if (dataBuffer)
+                return dataBuffer->getNativeObject(objectType);
+            return nullptr;
+        case ObjectTypes::VK_Micromap:
+            return Object(opacityMicromap.get());
+        default:
+            return nullptr;
+        }
+    }
+
+    uint64_t OpacityMicromap::getDeviceAddress() const
+    {
         return getBufferAddress(dataBuffer, 0).deviceAddress;
     }
 
@@ -651,7 +845,7 @@ namespace nvrhi::vulkan
         {
             m_CurrentCmdBuf->cmdBuf.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, pso->pipeline);
             m_CurrentPipelineLayout = pso->pipelineLayout;
-            m_CurrentPipelineShaderStages = convertShaderTypeToShaderStageFlagBits(ShaderType::AllRayTracing);
+            m_CurrentPushConstantsVisibility = pso->pushConstantVisibility;
         }
 
         if (arraysAreDifferent(m_CurrentRayTracingState.bindings, state.bindings) || m_AnyVolatileBufferWrites)
@@ -716,7 +910,7 @@ namespace nvrhi::vulkan
                         shaderGroupHandleSize);
                     sbtIndex++;
                 }
-                missHandles.setSize(shaderGroupBaseAlignment * uint32_t(shaderTable->hitGroups.size()));
+                missHandles.setSize(shaderGroupBaseAlignment * uint32_t(shaderTable->missShaders.size()));
                 missHandles.setStride(shaderGroupBaseAlignment);
             }
 
@@ -830,7 +1024,7 @@ namespace nvrhi::vulkan
 
         BindingVector<vk::DescriptorSetLayout> descriptorSetLayouts;
         uint32_t pushConstantSize = 0;
-        ShaderType pushConstantVisibility = ShaderType::None;
+        pso->pushConstantVisibility = vk::ShaderStageFlagBits();
         for (const BindingLayoutHandle& _layout : desc.globalBindingLayouts)
         {
             BindingLayout* layout = checked_cast<BindingLayout*>(_layout.Get());
@@ -843,7 +1037,7 @@ namespace nvrhi::vulkan
                     if (item.type == ResourceType::PushConstants)
                     {
                         pushConstantSize = item.size;
-                        pushConstantVisibility = layout->desc.visibility;
+                        pso->pushConstantVisibility = convertShaderTypeToShaderStageFlagBits(layout->desc.visibility);
                         // assume there's only one push constant item in all layouts -- the validation layer makes sure of that
                         break;
                     }
@@ -854,12 +1048,11 @@ namespace nvrhi::vulkan
         auto pushConstantRange = vk::PushConstantRange()
             .setOffset(0)
             .setSize(pushConstantSize)
-            .setStageFlags(convertShaderTypeToShaderStageFlagBits(pushConstantVisibility));
+            .setStageFlags(pso->pushConstantVisibility);
 
         auto pipelineLayoutInfo = vk::PipelineLayoutCreateInfo()
             .setSetLayoutCount(uint32_t(descriptorSetLayouts.size()))
             .setPSetLayouts(descriptorSetLayouts.data())
-            .setPushConstantRangeCount(0)
             .setPushConstantRangeCount(pushConstantSize ? 1 : 0)
             .setPPushConstantRanges(&pushConstantRange);
 

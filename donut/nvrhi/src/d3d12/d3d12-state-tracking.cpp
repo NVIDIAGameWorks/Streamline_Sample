@@ -50,11 +50,13 @@ namespace nvrhi::d3d12
 
             case ResourceType::TypedBuffer_SRV:
             case ResourceType::StructuredBuffer_SRV:
+            case ResourceType::RawBuffer_SRV:
                 requireBufferState(checked_cast<IBuffer*>(binding.resourceHandle), ResourceStates::ShaderResource);
                 break;
 
             case ResourceType::TypedBuffer_UAV:
             case ResourceType::StructuredBuffer_UAV:
+            case ResourceType::RawBuffer_UAV:
                 requireBufferState(checked_cast<IBuffer*>(binding.resourceHandle), ResourceStates::UnorderedAccess);
                 break;
 
@@ -158,6 +160,7 @@ namespace nvrhi::d3d12
             }
             else if ((barrier.stateBefore == ResourceStates::AccelStructWrite && (barrier.stateAfter & (ResourceStates::AccelStructRead | ResourceStates::AccelStructBuildBlas)) != 0) ||
                 (barrier.stateAfter == ResourceStates::AccelStructWrite && (barrier.stateBefore & (ResourceStates::AccelStructRead | ResourceStates::AccelStructBuildBlas)) != 0) ||
+                (barrier.stateBefore == ResourceStates::OpacityMicromapWrite && (barrier.stateAfter & (ResourceStates::AccelStructBuildInput)) != 0) ||
                 (stateAfter & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0)
             {
                 d3dbarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
@@ -166,10 +169,9 @@ namespace nvrhi::d3d12
             }
         }
 
-        assert(!m_D3DBarriers.empty()); // otherwise there's an early-out in the beginning of this function
+        if (m_D3DBarriers.size() > 0)
+            m_ActiveCommandList->commandList->ResourceBarrier(uint32_t(m_D3DBarriers.size()), m_D3DBarriers.data());
 
-        m_ActiveCommandList->commandList->ResourceBarrier(uint32_t(m_D3DBarriers.size()), m_D3DBarriers.data());
-        
         m_StateTracker.clearBarriers();
     }
 

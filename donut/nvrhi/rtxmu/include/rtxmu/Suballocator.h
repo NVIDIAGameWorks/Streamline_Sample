@@ -47,7 +47,7 @@ namespace rtxmu
     };
 
     // Block type default implementation to force client to implement
-    template<typename Block = BlockInterface>
+    template<typename AllocatorType, typename Block = BlockInterface>
     class Suballocator
     {
         // Forward decls
@@ -82,12 +82,24 @@ namespace rtxmu
         };
 
         Suballocator(uint64_t blockSize,
-                     uint64_t allocationAlignment)
+                     uint64_t allocationAlignment,
+                     AllocatorType* allocator)
         {
             m_blockSize = blockSize;
             m_allocationAlignment = allocationAlignment;
+            m_allocator = allocator;
         }
 
+        virtual ~Suballocator()
+        {
+            uint32_t blockIndex = 0;
+            for (BlockDesc* blockDesc : m_blocks)
+            {
+                blockDesc->block.free(m_allocator);
+                m_blocks.erase(m_blocks.begin() + blockIndex);
+                blockIndex++;
+            }
+        }
         SubAllocation allocate(uint64_t size)
         {
             // Align allocation
@@ -193,7 +205,7 @@ namespace rtxmu
                     // Release the big chunks that are a single resource
                     if (subBlock->size == blockDesc->size)
                     {
-                        blockDesc->block.free();
+                        blockDesc->block.free(m_allocator);
                         m_blocks.erase(m_blocks.begin() + blockIndex);
                     }
                     else
@@ -212,7 +224,7 @@ namespace rtxmu
                         if ((blockDesc->numSubBlocks == 0) &&
                             (m_blocks.size() > 1))
                         {
-                            blockDesc->block.free();
+                            blockDesc->block.free(m_allocator);
                             m_blocks.erase(m_blocks.begin() + blockIndex);
                         }
                     }
@@ -256,7 +268,7 @@ namespace rtxmu
         void createBlock(uint64_t blockAllocationSize)
         {
             BlockDesc* newBlock = new BlockDesc{};
-            newBlock->block.allocate(blockAllocationSize);
+            newBlock->block.allocate(m_allocator, blockAllocationSize);
             newBlock->size = blockAllocationSize;
             m_blocks.push_back(newBlock);
         }
@@ -346,7 +358,7 @@ namespace rtxmu
         uint64_t                m_allocationAlignment;
         std::vector<BlockDesc*> m_blocks;
         Stats                   m_stats;
+        AllocatorType*          m_allocator;
     };
 
 }// end rtxmu namespace
-

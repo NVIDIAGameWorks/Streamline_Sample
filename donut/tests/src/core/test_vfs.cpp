@@ -21,7 +21,6 @@
 */
 
 #include <donut/core/vfs/VFS.h>
-#include <donut/core/vfs/SQLiteFS.h>
 
 #include <donut/tests/utils.h>
 #include <filesystem>
@@ -49,17 +48,19 @@ void test_native_filesystem()
 		CHECK(fs.fileExists(rpath / "dummy") == false);
 	}
 
-	// enumerate
+	// enumerateDirectories
 	{
 		std::vector<std::string> result;
-		CHECK(fs.enumerate(rpath / "*", true, result)==true);
+		CHECK(fs.enumerateDirectories(rpath, vfs::enumerate_to_vector(result), true) == 2);
 		CHECK(result.size() == 2);
 		CHECK(result[0] == "include");
 		CHECK(result[1] == "src");
 	}
+
+	// enumerateFiles
 	{
 		std::vector<std::string> result;
-		CHECK(fs.enumerate(rpath / "CMake*", false, result)==true);
+		CHECK(fs.enumerateFiles(rpath, {".txt"}, vfs::enumerate_to_vector(result), true) == 1);
 		CHECK(result.size() == 1);
 		CHECK(result[0] == "CMakeLists.txt");
 	}
@@ -96,17 +97,18 @@ void test_relative_filesystem()
 		CHECK(relativeFS.fileExists(rpath / "CMakeLists.txt") == false);
 		CHECK(relativeFS.fileExists("dummy") == false);
 	}
-	// enumerate
+	// enumerateDirectories
 	{
 		std::vector<std::string> result;
-		CHECK(relativeFS.enumerate("*", true, result) == true);
+		CHECK(relativeFS.enumerateDirectories("/", vfs::enumerate_to_vector(result), true) == 2);
 		CHECK(result.size() == 2);
 		CHECK(result[0] == "include");
 		CHECK(result[1] == "src");
 	}
+	// enumerateFiles
 	{
 		std::vector<std::string> result;
-		CHECK(relativeFS.enumerate("CMake*", false, result) == true);
+		CHECK(relativeFS.enumerateFiles("/", {".txt"}, vfs::enumerate_to_vector(result), true) == 1);
 		CHECK(result.size() == 1);
 		CHECK(result[0] == "CMakeLists.txt");
 	}
@@ -144,17 +146,18 @@ void test_root_filesystem()
 		CHECK(rootFS.fileExists("/CMakeLists.txt") == false);
 		CHECK(rootFS.fileExists("/tests/dummy") == false);
 	}
-	// enumerate
+	// enumerateDirectories
 	{
 		std::vector<std::string> result;
-		CHECK(rootFS.enumerate("/tests/*", true, result) == true);
+		CHECK(rootFS.enumerateDirectories("/tests", vfs::enumerate_to_vector(result), true) == 2);
 		CHECK(result.size() == 2);
 		CHECK(result[0] == "include");
 		CHECK(result[1] == "src");
 	}
+	// enumerateFiles
 	{
 		std::vector<std::string> result;
-		CHECK(rootFS.enumerate("/tests/CMake*", false, result) == true);
+		CHECK(rootFS.enumerateFiles("/tests", { ".txt" }, vfs::enumerate_to_vector(result), true) == 1);
 		CHECK(result.size() == 1);
 		CHECK(result[0] == "CMakeLists.txt");
 	}
@@ -174,67 +177,6 @@ void test_root_filesystem()
 	CHECK(rootFS.unmount("/foo") == false);
 }
 
-void test_sqlite_filesystem()
-{
-#ifdef DONUT_WITH_SQLITE	
-	vfs::SQLiteFileSystem sqliteFS(":memory:", vfs::SQLiteFileSystem::Mode::READ_WRITE_ALLOW_CREATE, "");
-
-	CHECK(sqliteFS.isOpen() == true);
-
-    const std::filesystem::path sampleFileName = "/sample/file.txt";
-    const std::filesystem::path sampleFileName2 = "/sample/something.bin";
-	const std::filesystem::path sampleFileName3 = "/something.mat.json";
-    const std::filesystem::path nonexistentFileName = "/does/not/exist.txt";
-
-    const char* sampleData = "**TESTING SQLITE**'); DROP TABLE files; --"; // simulate an SQL injection ;)
-    CHECK(strlen(sampleData) > 0);
-
-    CHECK(sqliteFS.writeFile(sampleFileName, sampleData, strlen(sampleData)));
-
-    auto readData = sqliteFS.readFile(sampleFileName);
-
-    CHECK(readData != nullptr);
-    CHECK(readData->size() == strlen(sampleData));
-    CHECK(memcmp(readData->data(), sampleData, strlen(sampleData)) == 0);
-
-    readData = sqliteFS.readFile(nonexistentFileName);
-    CHECK(readData == nullptr);
-
-    CHECK(sqliteFS.fileExists(sampleFileName) == true);
-    CHECK(sqliteFS.fileExists(nonexistentFileName) == false);
-
-    const char* sampleData2 = "2a'YwGWu.U7j$&hG3dmj%.#^H_v<4x4>";
-    CHECK(sqliteFS.writeFile(sampleFileName2, sampleData2, strlen(sampleData2)));
-
-	CHECK(sqliteFS.writeFile(sampleFileName3, sampleData2, strlen(sampleData2)));
-
-    std::vector<std::string> matches;
-    CHECK(sqliteFS.enumerate("/sample/*.txt", false, matches));
-    CHECK(matches.size() == 1);
-    CHECK(matches[0] == sampleFileName.generic_string());
-
-    matches.clear();
-    CHECK(sqliteFS.enumerate("/*.mat.json", false, matches));
-    CHECK(matches.size() == 1);
-	CHECK(matches[0] == sampleFileName3.generic_string());
-
-	matches.clear();
-	CHECK(sqliteFS.enumerate("/*.ma..json", false, matches));
-	CHECK(matches.size() == 0);
-
-    matches.clear();
-    CHECK(sqliteFS.enumerate("/*/*", false, matches));
-    CHECK(matches.size() == 2);
-    CHECK(matches[0] == sampleFileName.generic_string());
-    CHECK(matches[1] == sampleFileName2.generic_string());
-
-    matches.clear();
-    CHECK(sqliteFS.enumerate("/sample/f??e.*", false, matches));
-    CHECK(matches.size() == 1);
-    CHECK(matches[0] == sampleFileName.generic_string());
-#endif
-}
-
 int main(int, char** argv)
 {
 	try
@@ -242,7 +184,6 @@ int main(int, char** argv)
 		test_native_filesystem();
 		test_relative_filesystem();
 		test_root_filesystem();
-		test_sqlite_filesystem();
 	}
 	catch (const std::runtime_error & err)
 	{

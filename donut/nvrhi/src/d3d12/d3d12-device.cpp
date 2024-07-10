@@ -143,6 +143,10 @@ namespace nvrhi::d3d12
             argDesc.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
             m_Context.device->CreateCommandSignature(&csDesc, nullptr, IID_PPV_ARGS(&m_Context.drawIndirectSignature));
 
+            csDesc.ByteStride = 20;
+            argDesc.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+            m_Context.device->CreateCommandSignature(&csDesc, nullptr, IID_PPV_ARGS(&m_Context.drawIndexedIndirectSignature));
+
             csDesc.ByteStride = 12;
             argDesc.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH;
             m_Context.device->CreateCommandSignature(&csDesc, nullptr, IID_PPV_ARGS(&m_Context.dispatchIndirectSignature));
@@ -173,8 +177,37 @@ namespace nvrhi::d3d12
             {
                 m_FastGeometryShaderSupported = true;
             }
+
+            NVAPI_D3D12_RAYTRACING_THREAD_REORDERING_CAPS ser = NVAPI_D3D12_RAYTRACING_THREAD_REORDERING_CAP_NONE;
+            if (NvAPI_D3D12_GetRaytracingCaps(m_Context.device, NVAPI_D3D12_RAYTRACING_CAPS_TYPE_THREAD_REORDERING, &ser, sizeof(ser)) == NVAPI_OK)
+            {
+                m_ShaderExecutionReorderingSupported = (ser & NVAPI_D3D12_RAYTRACING_THREAD_REORDERING_CAP_STANDARD) == NVAPI_D3D12_RAYTRACING_THREAD_REORDERING_CAP_STANDARD;
+            }
+        }
+
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+#ifdef NVRHI_WITH_RTXMU
+        m_OpacityMicromapSupported = false; // RTXMU does not support OMMs
+#else
+        if (m_NvapiIsInitialized)
+        {
+            NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAPS caps = NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAP_NONE;
+            NvAPI_D3D12_GetRaytracingCaps(m_Context.device5, NVAPI_D3D12_RAYTRACING_CAPS_TYPE_OPACITY_MICROMAP, &caps, sizeof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAPS));
+            m_OpacityMicromapSupported = caps == NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAP_STANDARD;
+        }
+
+        if (m_OpacityMicromapSupported)
+        {
+            NVAPI_D3D12_SET_CREATE_PIPELINE_STATE_OPTIONS_PARAMS params = {};
+            params.version = NVAPI_D3D12_SET_CREATE_PIPELINE_STATE_OPTIONS_PARAMS_VER;
+            params.flags = NVAPI_D3D12_PIPELINE_CREATION_STATE_FLAGS_ENABLE_OMM_SUPPORT;
+            [[maybe_unused]] NvAPI_Status res = NvAPI_D3D12_SetCreatePipelineStateOptions(m_Context.device5, &params);
+            assert(res == NVAPI_OK);
         }
 #endif
+#endif // #if NVRHI_WITH_NVAPI_OPACITY_MICROMAPS
+
+#endif // #if NVRHI_D3D12_WITH_NVAPI
     }
 
     Device::~Device()
@@ -380,10 +413,14 @@ namespace nvrhi::d3d12
             return m_RayTracingSupported;
         case Feature::RayTracingPipeline:
             return m_RayTracingSupported;
+        case Feature::RayTracingOpacityMicromap:
+            return m_OpacityMicromapSupported;
         case Feature::RayQuery:
             return m_TraceRayInlineSupported;
         case Feature::FastGeometryShader:
             return m_FastGeometryShaderSupported;
+        case Feature::ShaderExecutionReordering:
+            return m_ShaderExecutionReorderingSupported;
         case Feature::Meshlets:
             return m_MeshletsSupported;
         case Feature::VariableRateShading:
@@ -404,6 +441,10 @@ namespace nvrhi::d3d12
             return (getQueue(CommandQueue::Compute) != nullptr);
         case Feature::CopyQueue:
             return (getQueue(CommandQueue::Copy) != nullptr);
+        case Feature::ConservativeRasterization:
+            return true;
+        case Feature::ConstantBufferRanges:
+            return true;
         default:
             return false;
         }

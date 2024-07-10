@@ -75,7 +75,10 @@ namespace nvrhi::vulkan
         if (desc.isAccelStructStorage)
             usageFlags |= vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR;
 
-        if (m_Context.extensions.KHR_buffer_device_address)
+        if (desc.isShaderBindingTable)
+            usageFlags |= vk::BufferUsageFlagBits::eShaderBindingTableKHR;
+
+        if (m_Context.extensions.buffer_device_address)
             usageFlags |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
 
         uint64_t size = desc.byteSize;
@@ -114,6 +117,15 @@ namespace nvrhi::vulkan
             .setUsage(usageFlags)
             .setSharingMode(vk::SharingMode::eExclusive);
 
+#if _WIN32
+        const auto handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+#else
+        const auto handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+#endif
+        vk::ExternalMemoryBufferCreateInfo externalBuffer{ handleType };
+        if (desc.sharedResourceFlags == SharedResourceFlags::Shared)
+            bufferInfo.setPNext(&externalBuffer);
+
         vk::Result res = m_Context.device.createBuffer(&bufferInfo, m_Context.allocationCallbacks, &buffer->buffer);
         CHECK_VK_FAIL(res);
 
@@ -132,11 +144,20 @@ namespace nvrhi::vulkan
                 assert(buffer->mappedMemory);
             }
 
-            if (m_Context.extensions.KHR_buffer_device_address)
+            if (m_Context.extensions.buffer_device_address)
             {
                 auto addressInfo = vk::BufferDeviceAddressInfo().setBuffer(buffer->buffer);
 
                 buffer->deviceAddress = m_Context.device.getBufferAddress(addressInfo);
+            }
+
+            if (desc.sharedResourceFlags == SharedResourceFlags::Shared)
+            {
+#ifdef _WIN32
+                buffer->sharedHandle = m_Context.device.getMemoryWin32HandleKHR({ buffer->memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32 });
+#else
+                buffer->sharedHandle = (void*)(size_t)m_Context.device.getMemoryFdKHR({ buffer->memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd });
+#endif
             }
         }
 
@@ -498,6 +519,8 @@ namespace nvrhi::vulkan
             return Object(buffer);
         case ObjectTypes::VK_DeviceMemory:
             return Object(memory);
+        case ObjectTypes::SharedHandle:
+            return Object(sharedHandle);
         default:
             return nullptr;
         }
@@ -538,7 +561,7 @@ namespace nvrhi::vulkan
         // buffer->barrier(cmd, vk::PipelineStageFlagBits::eHost, accessFlags);
 
         void* ptr = nullptr;
-        const vk::Result res = m_Context.device.mapMemory(buffer->memory, offset, size, vk::MemoryMapFlags(), &ptr);
+        [[maybe_unused]] const vk::Result res = m_Context.device.mapMemory(buffer->memory, offset, size, vk::MemoryMapFlags(), &ptr);
         assert(res == vk::Result::eSuccess);
 
         return ptr;
@@ -589,7 +612,7 @@ namespace nvrhi::vulkan
 
         buffer->heap = heap;
 
-        if (m_Context.extensions.KHR_buffer_device_address)
+        if (m_Context.extensions.buffer_device_address)
         {
             auto addressInfo = vk::BufferDeviceAddressInfo().setBuffer(buffer->buffer);
 

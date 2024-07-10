@@ -18,6 +18,18 @@ Key features:
 - Supports all types of pipelines: Graphics, Compute, Ray Tracing, and Meshlet.
 - Validation layer and resource reflection for easy debugging.
 
+NVRHI is used in several NVIDIA GameWorks SDKs:
+
+- [Adaptive and Variable-Rate Shading SDK](https://github.com/NVIDIAGameWorks/nas-sample)
+- [Donut Framework](https://github.com/NVIDIAGameWorks/donut) and its [Examples](https://github.com/NVIDIAGameWorks/donut_examples)
+- [Opacity Micro-Map SDK](https://github.com/NVIDIAGameWorks/Opacity-MicroMap-SDK)
+- [Path Tracing SDK](https://github.com/NVIDIAGameWorks/Path-Tracing-SDK)
+- [RTXDI SDK](https://github.com/NVIDIAGameWorks/RTXDI)
+
+Notable third-party projects using NVRHI:
+
+- [RBDoom3-BFG](https://github.com/RobertBeckebans/RBDOOM-3-BFG)
+
 Various early versions of NVRHI have been used in various projects created at NVIDIA, including:
 
 - [Asteroids demo](https://developer.nvidia.com/blog/using-turing-mesh-shaders-nvidia-asteroids-demo)
@@ -59,22 +71,6 @@ To build NVRHI as a shared library (DLL or .so):
 
 See the [programming guide](doc/ProgrammingGuide.md) and the [tutorial](doc/Tutorial.md).
 
-## Shader Compiler
-
-NVRHI includes an optional tool for compiling shaders and generating shader permutations. The shader compiler is normally built together with NVRHI when the `NVRHI_WITH_SHADER_COMPILER` variable is `ON`. It can be used from CMake rules by its target name `shaderCompiler` or directly from its install location using the executable name `nvrhi-scomp`.
-
-The NVRHI shader compiler is just a front-end for [DXC](https://github.com/microsoft/DirectXShaderCompiler), it does not implement any shader language processing itself.
-
-For the list of command line options, run `nvrhi-scomp --help`.
-
-The shader compiler is driven by a configuration file that lists shaders, their targets and permutations. The file has one shader source per line, for example:
-```
-Shaders.hlsl -T vs_5_0 -E main_vs
-Shaders.hlsl -T ps_5_0 -E main_ps -D ENABLE_SOMETHING={0,1}
-```
-
-The above configuration will compile 3 shaders total: one vertex shader `main_vs` and two permutations of pixel shader `main_ps` with different values of the `ENABLE_SOMETHING` define. The pixel shader permutations will be combined into a single permutation blob. Permutation blobs can be parsed using functions declared in `<nvrhi/common/shader-blob.h>`.
-
 ## NVAPI Support
 
 NVRHI includes optional support for certain DX11 and DX12 extensions available through the NVAPI library. The library is not distributed with NVRHI but is available separately [here](https://developer.nvidia.com/nvapi).
@@ -83,8 +79,11 @@ To enable NVAPI support, extract the NVAPI SDK into the `nvapi` subfolder of you
 
 The following extensions are supported:
 
-- Fast Geometry Shader with optional coordinate swizzling (Maxwell+)
+- Opacity Micro-Maps (DX12, Ada+)
+- Shader Execution Reordering on DX12 (DX12, Ada+)
 - Single Pass Stereo (Pascal+)
+- Fast Geometry Shader with optional coordinate swizzling (Maxwell+)
+- Conservative Raster and other rasterizer features (Maxwell+)
 - HLSL Extensions through a fake UAV slot (see [this blog post](https://developer.nvidia.com/unlocking-gpu-intrinsics-hlsl))
 
 ## RTXMU Integration

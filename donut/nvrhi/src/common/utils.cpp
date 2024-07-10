@@ -135,7 +135,7 @@ namespace nvrhi::utils
             desc.bottomLevelGeometries.size(),
             desc.buildFlags);
     }
-    
+
     void TextureUavBarrier(ICommandList* commandList, ITexture* texture)
     {
         commandList->setTextureState(texture, AllSubresources, ResourceStates::UnorderedAccess);
@@ -354,6 +354,7 @@ namespace nvrhi::utils
         if (desc.isDrawIndirectArgs) ss << ", IsDrawIndirectArgs";
         if (desc.isAccelStructBuildInput) ss << ", IsAccelStructBuildInput";
         if (desc.isAccelStructStorage) ss << ", IsAccelStructStorage";
+        if (desc.isShaderBindingTable) ss << ", IsShaderBindingTable";
 
         ss << ")";
 

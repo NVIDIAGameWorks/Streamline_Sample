@@ -36,6 +36,8 @@ namespace nvrhi::d3d11
         {
         case ObjectTypes::D3D11_Resource:
             return Object(resource);
+        case ObjectTypes::SharedHandle:
+            return Object(resource);
         default:
             return nullptr;
         }
@@ -73,11 +75,11 @@ namespace nvrhi::d3d11
 
         // convert flags
         UINT bindFlags;
-        if (cpuAccess != CpuAccessMode::None)
+        bindFlags = 0;
+        if (cpuAccess == CpuAccessMode::None)
         {
-            bindFlags = 0;
-        } else {
-            bindFlags = D3D11_BIND_SHADER_RESOURCE;
+            if (d.isShaderResource)
+                bindFlags |= D3D11_BIND_SHADER_RESOURCE;
             if (d.isRenderTarget)
                 bindFlags |= (formatInfo.hasDepth || formatInfo.hasStencil) ? D3D11_BIND_DEPTH_STENCIL : D3D11_BIND_RENDER_TARGET;
             if (d.isUAV)
@@ -91,10 +93,15 @@ namespace nvrhi::d3d11
             cpuAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
         UINT miscFlags = 0;
-        if ((d.sharedResourceFlags & SharedResourceFlags::Shared_NTHandle) != 0)
+        bool isShared = false;
+        if ((d.sharedResourceFlags & SharedResourceFlags::Shared_NTHandle) != 0) {
             miscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-        else if ((d.sharedResourceFlags & SharedResourceFlags::Shared) != 0)
+            isShared = true;
+        }
+        else if ((d.sharedResourceFlags & SharedResourceFlags::Shared) != 0) {
             miscFlags |= D3D11_RESOURCE_MISC_SHARED;
+            isShared = true;
+        }
 
         RefCountPtr<ID3D11Resource> pResource;
 
@@ -203,9 +210,18 @@ namespace nvrhi::d3d11
         if (!d.debugName.empty())
             SetDebugName(pResource, d.debugName.c_str());
         
+        HANDLE sharedHandle = nullptr;
+        if(isShared)
+        {
+            RefCountPtr<IDXGIResource1 > pDxgiResource1;
+            if (SUCCEEDED(pResource->QueryInterface(IID_PPV_ARGS(&pDxgiResource1))))
+                pDxgiResource1->GetSharedHandle(&sharedHandle);    
+        }
+
         Texture* texture = new Texture(m_Context);
         texture->desc = d;
         texture->resource = pResource;
+        texture->sharedHandle = sharedHandle;
         return TextureHandle::Create(texture);
     }
 

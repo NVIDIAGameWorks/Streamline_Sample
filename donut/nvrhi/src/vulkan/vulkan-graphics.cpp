@@ -61,7 +61,7 @@ namespace nvrhi::vulkan
     {
         Framebuffer *fb = new Framebuffer(m_Context);
         fb->desc = desc;
-        fb->framebufferInfo = FramebufferInfo(desc);
+        fb->framebufferInfo = FramebufferInfoEx(desc);
 
         attachment_vector<vk::AttachmentDescription2> attachmentDescs(desc.colorAttachments.size());
         attachment_vector<vk::AttachmentReference2> colorAttachmentRefs(desc.colorAttachments.size());
@@ -77,10 +77,10 @@ namespace nvrhi::vulkan
             const auto& rt = desc.colorAttachments[i];
             Texture* t = checked_cast<Texture*>(rt.texture);
 
-            assert(fb->framebufferInfo.width == t->desc.width >> rt.subresources.baseMipLevel);
-            assert(fb->framebufferInfo.height == t->desc.height >> rt.subresources.baseMipLevel);
+            assert(fb->framebufferInfo.width == std::max(t->desc.width >> rt.subresources.baseMipLevel, 1u));
+            assert(fb->framebufferInfo.height == std::max(t->desc.height >> rt.subresources.baseMipLevel, 1u));
 
-            const vk::Format attachmentFormat = (rt.format == Format::UNKNOWN ? t->imageInfo.format : convertFormat(rt.format));
+            const vk::Format attachmentFormat = (rt.format == Format::UNKNOWN ? t->imageInfo.format : vk::Format(convertFormat(rt.format)));
 
             attachmentDescs[i] = vk::AttachmentDescription2()
                                         .setFormat(attachmentFormat)
@@ -98,7 +98,7 @@ namespace nvrhi::vulkan
 
             TextureDimension dimension = getDimensionForFramebuffer(t->desc.dimension, subresources.numArraySlices > 1);
 
-            const auto& view = t->getSubresourceView(subresources, dimension);
+            const auto& view = t->getSubresourceView(subresources, dimension, rt.format);
             attachmentViews[i] = view.view;
 
             fb->resources.push_back(rt.texture);
@@ -116,8 +116,8 @@ namespace nvrhi::vulkan
 
             Texture* texture = checked_cast<Texture*>(att.texture);
 
-            assert(fb->framebufferInfo.width == texture->desc.width >> att.subresources.baseMipLevel);
-            assert(fb->framebufferInfo.height == texture->desc.height >> att.subresources.baseMipLevel);
+            assert(fb->framebufferInfo.width == std::max(texture->desc.width >> att.subresources.baseMipLevel, 1u));
+            assert(fb->framebufferInfo.height == std::max(texture->desc.height >> att.subresources.baseMipLevel, 1u));
 
             vk::ImageLayout depthLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
             if (desc.depthAttachment.isReadOnly)
@@ -141,7 +141,7 @@ namespace nvrhi::vulkan
 
             TextureDimension dimension = getDimensionForFramebuffer(texture->desc.dimension, subresources.numArraySlices > 1);
 
-            const auto& view = texture->getSubresourceView(subresources, dimension);
+            const auto& view = texture->getSubresourceView(subresources, dimension, att.format);
             attachmentViews.push_back(view.view);
 
             fb->resources.push_back(att.texture);
@@ -182,7 +182,7 @@ namespace nvrhi::vulkan
             TextureSubresourceSet subresources = vrsAttachment.subresources.resolve(vrsTexture->desc, true);
             TextureDimension dimension = getDimensionForFramebuffer(vrsTexture->desc.dimension, subresources.numArraySlices > 1);
 
-            const auto& view = vrsTexture->getSubresourceView(subresources, dimension);
+            const auto& view = vrsTexture->getSubresourceView(subresources, dimension, vrsAttachment.format);
             attachmentViews.push_back(view.view);
 
             fb->resources.push_back(vrsAttachment.texture);
@@ -235,12 +235,12 @@ namespace nvrhi::vulkan
         return FramebufferHandle::Create(fb);
     }
 
-    FramebufferHandle Device::createHandleForNativeFramebuffer(vk::RenderPass renderPass, vk::Framebuffer framebuffer,
+    FramebufferHandle Device::createHandleForNativeFramebuffer(VkRenderPass renderPass, VkFramebuffer framebuffer,
         const FramebufferDesc& desc, bool transferOwnership)
     {
         Framebuffer* fb = new Framebuffer(m_Context);
         fb->desc = desc;
-        fb->framebufferInfo = FramebufferInfo(desc);
+        fb->framebufferInfo = FramebufferInfoEx(desc);
         fb->renderPass = renderPass;
         fb->framebuffer = framebuffer;
         fb->managed = transferOwnership;
@@ -479,6 +479,14 @@ namespace nvrhi::vulkan
                             .setDepthBiasSlopeFactor(rasterState.slopeScaledDepthBias)
                             .setLineWidth(1.0f);
         
+        // Conservative raster state
+        auto conservativeRasterState = vk::PipelineRasterizationConservativeStateCreateInfoEXT()
+            .setConservativeRasterizationMode(vk::ConservativeRasterizationModeEXT::eOverestimate);
+		if (rasterState.conservativeRasterEnable)
+		{
+			rasterizer.setPNext(&conservativeRasterState);
+		}
+
         auto multisample = vk::PipelineMultisampleStateCreateInfo()
                             .setRasterizationSamples(vk::SampleCountFlagBits(fb->framebufferInfo.sampleCount))
                             .setAlphaToCoverageEnable(blendState.alphaToCoverageEnable);
@@ -499,6 +507,7 @@ namespace nvrhi::vulkan
 
         BindingVector<vk::DescriptorSetLayout> descriptorSetLayouts;
         uint32_t pushConstantSize = 0;
+        pso->pushConstantVisibility = vk::ShaderStageFlagBits();
         for (const BindingLayoutHandle& _layout : desc.bindingLayouts)
         {
             BindingLayout* layout = checked_cast<BindingLayout*>(_layout.Get());
@@ -511,6 +520,7 @@ namespace nvrhi::vulkan
                     if (item.type == ResourceType::PushConstants)
                     {
                         pushConstantSize = item.size;
+                        pso->pushConstantVisibility = convertShaderTypeToShaderStageFlagBits(layout->desc.visibility);
                         // assume there's only one push constant item in all layouts -- the validation layer makes sure of that
                         break;
                     }
@@ -521,7 +531,7 @@ namespace nvrhi::vulkan
         auto pushConstantRange = vk::PushConstantRange()
             .setOffset(0)
             .setSize(pushConstantSize)
-            .setStageFlags(convertShaderTypeToShaderStageFlagBits(pso->shaderMask));
+            .setStageFlags(pso->pushConstantVisibility);
 
         auto pipelineLayoutInfo = vk::PipelineLayoutCreateInfo()
                                     .setSetLayoutCount(uint32_t(descriptorSetLayouts.size()))
@@ -690,7 +700,7 @@ namespace nvrhi::vulkan
         }
 
         m_CurrentPipelineLayout = pso->pipelineLayout;
-        m_CurrentPipelineShaderStages = convertShaderTypeToShaderStageFlagBits(pso->shaderMask);
+        m_CurrentPushConstantsVisibility = pso->pushConstantVisibility;
 
         if (arraysAreDifferent(m_CurrentComputeState.bindings, state.bindings) || m_AnyVolatileBufferWrites)
         {
@@ -737,18 +747,24 @@ namespace nvrhi::vulkan
 
         if (!state.vertexBuffers.empty() && arraysAreDifferent(state.vertexBuffers, m_CurrentGraphicsState.vertexBuffers))
         {
-            static_vector<vk::Buffer, c_MaxVertexAttributes> vertexBuffers;
-            static_vector<vk::DeviceSize, c_MaxVertexAttributes> vertexBufferOffsets;
+            vk::Buffer vertexBuffers[c_MaxVertexAttributes];
+            vk::DeviceSize vertexBufferOffsets[c_MaxVertexAttributes];
+            uint32_t maxVbIndex = 0;
 
-            for (const auto& vb : state.vertexBuffers)
+            for (const auto& binding : state.vertexBuffers)
             {
-                vertexBuffers.push_back(checked_cast<Buffer*>(vb.buffer)->buffer);
-                vertexBufferOffsets.push_back(vk::DeviceSize(vb.offset));
+                // This is tested by the validation layer, skip invalid slots here if VL is not used.
+                if (binding.slot >= c_MaxVertexAttributes)
+                    continue;
 
-                m_CurrentCmdBuf->referencedResources.push_back(vb.buffer);
+                vertexBuffers[binding.slot] = checked_cast<Buffer*>(binding.buffer)->buffer;
+                vertexBufferOffsets[binding.slot] = vk::DeviceSize(binding.offset);
+                maxVbIndex = std::max(maxVbIndex, binding.slot);
+
+                m_CurrentCmdBuf->referencedResources.push_back(binding.buffer);
             }
 
-            m_CurrentCmdBuf->cmdBuf.bindVertexBuffers(0, uint32_t(vertexBuffers.size()), vertexBuffers.data(), vertexBufferOffsets.data());
+            m_CurrentCmdBuf->cmdBuf.bindVertexBuffers(0, maxVbIndex + 1, vertexBuffers, vertexBufferOffsets);
         }
 
         if (state.indirectParams)
@@ -807,7 +823,7 @@ namespace nvrhi::vulkan
             args.startInstanceLocation);
     }
 
-    void CommandList::drawIndirect(uint32_t offsetBytes)
+    void CommandList::drawIndirect(uint32_t offsetBytes, uint32_t drawCount)
     {
         assert(m_CurrentCmdBuf);
 
@@ -816,8 +832,19 @@ namespace nvrhi::vulkan
         Buffer* indirectParams = checked_cast<Buffer*>(m_CurrentGraphicsState.indirectParams);
         assert(indirectParams);
 
-        // TODO: is this right?
-        m_CurrentCmdBuf->cmdBuf.drawIndirect(indirectParams->buffer, offsetBytes, 1, 0);
+        m_CurrentCmdBuf->cmdBuf.drawIndirect(indirectParams->buffer, offsetBytes, drawCount, sizeof(DrawIndirectArguments));
+    }
+
+    void CommandList::drawIndexedIndirect(uint32_t offsetBytes, uint32_t drawCount)
+    {
+        assert(m_CurrentCmdBuf);
+
+        updateGraphicsVolatileBuffers();
+
+        Buffer* indirectParams = checked_cast<Buffer*>(m_CurrentGraphicsState.indirectParams);
+        assert(indirectParams);
+
+        m_CurrentCmdBuf->cmdBuf.drawIndexedIndirect(indirectParams->buffer, offsetBytes, drawCount, sizeof(DrawIndexedIndirectArguments));
     }
 
 } // namespace nvrhi::vulkan

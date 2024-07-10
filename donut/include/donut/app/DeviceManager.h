@@ -146,7 +146,7 @@ namespace donut::app
         std::vector<std::string> optionalVulkanDeviceExtensions;
         std::vector<std::string> optionalVulkanLayers;
         std::vector<size_t> ignoredVulkanValidationMessageLocations;
-        std::function<void(vk::DeviceCreateInfo&)> deviceCreateInfoCallback;
+        std::function<void(VkDeviceCreateInfo&)> deviceCreateInfoCallback;
 #endif
     };
 
@@ -179,6 +179,7 @@ namespace donut::app
 
         DeviceCreationParameters m_DeviceParams;
         GLFWwindow *m_Window = nullptr;
+        bool m_EnableRenderDuringWindowMovement = false;
         // set to true if running on NV GPU
         bool m_IsNvidia = false;
         std::list<IRenderPass *> m_vRenderPasses;
@@ -208,7 +209,7 @@ namespace donut::app
         void Animate(double elapsedTime);
         void Render();
         void UpdateAverageFrameTime(double elapsedTime);
-
+        void AnimateRenderPresent();
         // device-specific methods
         virtual bool CreateDeviceAndSwapChain() = 0;
         virtual void DestroyDeviceAndSwapChain() = 0;
@@ -228,6 +229,7 @@ namespace donut::app
         [[nodiscard]] bool IsVsyncEnabled() const { return m_DeviceParams.vsyncEnabled; }
         virtual void SetVsyncEnabled(bool enabled) { m_RequestedVSync = enabled; /* will be processed later */ }
         virtual void ReportLiveObjects() {}
+        void SetEnableRenderDuringWindowMovement(bool val) {m_EnableRenderDuringWindowMovement = val;} 
 
         // these are public in order to be called from the GLFW callback functions
         void WindowCloseCallback() { }
@@ -252,7 +254,7 @@ namespace donut::app
         nvrhi::IFramebuffer* GetCurrentFramebuffer();
         nvrhi::IFramebuffer* GetFramebuffer(uint32_t index);
 
-        void Shutdown();
+        virtual void Shutdown();
         virtual ~DeviceManager() = default;
 
         void SetWindowTitle(const char* title);

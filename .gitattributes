@@ -6,3 +6,4 @@
 *.pdb filter=lfs diff=lfs merge=lfs -text
 donut/thirdparty/sqlite/sqlite3.c filter=lfs diff=lfs merge=lfs -text
 **.bin filter=lfs diff=lfs merge=lfs -text
+donut/nvrhi/thirdparty/Vulkan-Headers/registry/validusage.json filter=lfs diff=lfs merge=lfs -text

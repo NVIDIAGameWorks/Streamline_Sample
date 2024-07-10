@@ -603,7 +603,7 @@ void SceneGraph::UnregisterLeaf(const std::shared_ptr<SceneGraphLeaf>& leaf)
         {
             if (m_Meshes.Release(mesh))
             {
-                m_GeometryCount += mesh->geometries.size();
+                m_GeometryCount -= mesh->geometries.size();
                 if (OnMeshRemoved)
                     OnMeshRemoved(mesh);
             }
@@ -618,7 +618,7 @@ void SceneGraph::UnregisterLeaf(const std::shared_ptr<SceneGraphLeaf>& leaf)
             {
                 if (m_Meshes.Release(mesh->skinPrototype))
                 {
-                    m_GeometryCount += mesh->skinPrototype->geometries.size();
+                    m_GeometryCount -= mesh->skinPrototype->geometries.size();
                     if (OnMeshRemoved)
                         OnMeshRemoved(mesh->skinPrototype);
                 }
@@ -784,7 +784,8 @@ std::shared_ptr<SceneGraphNode> SceneGraph::Attach(const std::shared_ptr<SceneGr
             {
                 for (auto& joint : skinnedInstance->joints)
                 {
-                    auto newNode = nodeMap[joint.node.get()];
+                    auto jointNode = joint.node.lock();
+                    auto newNode = nodeMap[jointNode.get()];
                     if (newNode)
                     {
                         joint.node = newNode;

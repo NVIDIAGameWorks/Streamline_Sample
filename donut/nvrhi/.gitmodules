@@ -1,0 +1,7 @@
+[submodule "rtxmu"]
+	path = rtxmu
+	url = https://github.com/NVIDIAGameWorks/RTXMU.git
+[submodule "thirdparty/Vulkan-Headers"]
+	path = thirdparty/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+

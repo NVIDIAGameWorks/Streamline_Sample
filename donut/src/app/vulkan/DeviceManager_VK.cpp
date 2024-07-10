@@ -56,12 +56,14 @@ freely, subject to the following restrictions:
 #include <nvrhi/vulkan.h>
 #include <nvrhi/validation.h>
 
-using namespace donut;
-using namespace donut::app;
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+#include <vulkan/vulkan.hpp>
 
 // Define the Vulkan dynamic dispatcher - this needs to occur in exactly one cpp file in the program.
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
+using namespace donut;
+using namespace donut::app;
 
 class DeviceManager_VK : public DeviceManager
 {
@@ -199,7 +201,10 @@ private:
             VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
             VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
             VK_NV_MESH_SHADER_EXTENSION_NAME,
-            VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME
+            VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME,
+            VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+            VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
+            VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME
         },
     };
 
@@ -232,6 +237,7 @@ private:
 
     vk::SurfaceFormatKHR m_SwapChainFormat;
     vk::SwapchainKHR m_SwapChain;
+    bool m_SwapChainMutableFormatSupported = false;
 
     struct SwapChainImage
     {
@@ -250,6 +256,8 @@ private:
 
     std::queue<nvrhi::EventQueryHandle> m_FramesInFlight;
     std::vector<nvrhi::EventQueryHandle> m_QueryPool;
+
+    bool m_BufferDeviceAddressSupported = false;
 
 private:
     static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(
@@ -402,11 +410,37 @@ bool DeviceManager_VK::createInstance()
 
     auto instanceExtVec = stringSetToVector(enabledExtensions.instance);
     auto layerVec = stringSetToVector(enabledExtensions.layers);
+    
+    auto applicationInfo = vk::ApplicationInfo();
 
-    auto applicationInfo = vk::ApplicationInfo()
-        .setApiVersion(VK_MAKE_VERSION(1, 2, 0));
+    // Query the Vulkan API version supported on the system to make sure we use at least 1.3 when that's present.
+    vk::Result res = vk::enumerateInstanceVersion(&applicationInfo.apiVersion);
 
-    // create the vulkan instance
+    if (res != vk::Result::eSuccess)
+    {
+        log::error("Call to vkEnumerateInstanceVersion failed, error code = %s", nvrhi::vulkan::resultToString(VkResult(res)));
+        return false;
+    }
+
+    const uint32_t minimumVulkanVersion = VK_MAKE_API_VERSION(0, 1, 3, 0);
+
+    // Check if the Vulkan API version is sufficient.
+    if (applicationInfo.apiVersion < minimumVulkanVersion)
+    {
+        log::error("The Vulkan API version supported on the system (%d.%d.%d) is too low, at least %d.%d.%d is required.",
+            VK_API_VERSION_MAJOR(applicationInfo.apiVersion), VK_API_VERSION_MINOR(applicationInfo.apiVersion), VK_API_VERSION_PATCH(applicationInfo.apiVersion),
+            VK_API_VERSION_MAJOR(minimumVulkanVersion), VK_API_VERSION_MINOR(minimumVulkanVersion), VK_API_VERSION_PATCH(minimumVulkanVersion));
+        return false;
+    }
+
+    // Spec says: A non-zero variant indicates the API is a variant of the Vulkan API and applications will typically need to be modified to run against it.
+    if (VK_API_VERSION_VARIANT(applicationInfo.apiVersion) != 0)
+    {
+        log::error("The Vulkan API supported on the system uses an unexpected variant: %d.", VK_API_VERSION_VARIANT(applicationInfo.apiVersion));
+        return false;
+    }
+
+    // Create the vulkan instance
     vk::InstanceCreateInfo info = vk::InstanceCreateInfo()
         .setEnabledLayerCount(uint32_t(layerVec.size()))
         .setPpEnabledLayerNames(layerVec.data())
@@ -414,10 +448,10 @@ bool DeviceManager_VK::createInstance()
         .setPpEnabledExtensionNames(instanceExtVec.data())
         .setPApplicationInfo(&applicationInfo);
 
-    const vk::Result res = vk::createInstance(&info, nullptr, &m_VulkanInstance);
+    res = vk::createInstance(&info, nullptr, &m_VulkanInstance);
     if (res != vk::Result::eSuccess)
     {
-        log::error("Failed to create a Vulkan instance, error code = %s", nvrhi::vulkan::resultToString(res));
+        log::error("Failed to create a Vulkan instance, error code = %s", nvrhi::vulkan::resultToString(VkResult(res)));
         return false;
     }
 
@@ -442,7 +476,7 @@ void DeviceManager_VK::installDebugCallback()
 
 bool DeviceManager_VK::pickPhysicalDevice()
 {
-    vk::Format requestedFormat = nvrhi::vulkan::convertFormat(m_DeviceParams.swapChainFormat);
+    VkFormat requestedFormat = nvrhi::vulkan::convertFormat(m_DeviceParams.swapChainFormat);
     vk::Extent2D requestedExtent(m_DeviceParams.backBufferWidth, m_DeviceParams.backBufferHeight);
 
     auto devices = m_VulkanInstance.enumeratePhysicalDevices();
@@ -521,7 +555,7 @@ bool DeviceManager_VK::pickPhysicalDevice()
         bool surfaceFormatPresent = false;
         for (const vk::SurfaceFormatKHR& surfaceFmt : surfaceFmts)
         {
-            if (surfaceFmt.format == requestedFormat)
+            if (surfaceFmt.format == vk::Format(requestedFormat))
             {
                 surfaceFormatPresent = true;
                 break;
@@ -656,12 +690,16 @@ bool DeviceManager_VK::createDevice()
         }
     }
 
+    const vk::PhysicalDeviceProperties physicalDeviceProperties = m_VulkanPhysicalDevice.getProperties();
+    m_RendererString = std::string(physicalDeviceProperties.deviceName.data());
+
     bool accelStructSupported = false;
-    bool bufferAddressSupported = false;
     bool rayPipelineSupported = false;
     bool rayQuerySupported = false;
     bool meshletsSupported = false;
     bool vrsSupported = false;
+    bool synchronization2Supported = false;
+    bool maintenance4Supported = false;
 
     log::message(m_DeviceParams.infoLogSeverity, "Enabled Vulkan device extensions:");
     for (const auto& ext : enabledExtensions.device)
@@ -670,8 +708,6 @@ bool DeviceManager_VK::createDevice()
 
         if (ext == VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
             accelStructSupported = true;
-        else if (ext == VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)
-            bufferAddressSupported = true;
         else if (ext == VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)
             rayPipelineSupported = true;
         else if (ext == VK_KHR_RAY_QUERY_EXTENSION_NAME)
@@ -680,7 +716,28 @@ bool DeviceManager_VK::createDevice()
             meshletsSupported = true;
         else if (ext == VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME)
             vrsSupported = true;
+        else if (ext == VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME)
+            synchronization2Supported = true;
+        else if (ext == VK_KHR_MAINTENANCE_4_EXTENSION_NAME)
+            maintenance4Supported = true;
+        else if (ext == VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME)
+            m_SwapChainMutableFormatSupported = true;
     }
+
+#define APPEND_EXTENSION(condition, desc) if (condition) { (desc).pNext = pNext; pNext = &(desc); }  // NOLINT(cppcoreguidelines-macro-usage)
+    void* pNext = nullptr;
+
+    vk::PhysicalDeviceFeatures2 physicalDeviceFeatures2;
+    // Determine support for Buffer Device Address, the Vulkan 1.2 way
+    auto bufferDeviceAddressFeatures = vk::PhysicalDeviceBufferDeviceAddressFeatures();
+    // Determine support for maintenance4
+    auto maintenance4Features = vk::PhysicalDeviceMaintenance4Features();
+
+    APPEND_EXTENSION(true, bufferDeviceAddressFeatures);
+    APPEND_EXTENSION(maintenance4Supported, maintenance4Features);
+
+    physicalDeviceFeatures2.pNext = pNext;
+    m_VulkanPhysicalDevice.getFeatures2(&physicalDeviceFeatures2);
 
     std::unordered_set<int> uniqueQueueFamilies = {
         m_GraphicsQueueFamily,
@@ -694,6 +751,7 @@ bool DeviceManager_VK::createDevice()
 
     float priority = 1.f;
     std::vector<vk::DeviceQueueCreateInfo> queueDesc;
+    queueDesc.reserve(uniqueQueueFamilies.size());
     for(int queueFamily : uniqueQueueFamilies)
     {
         queueDesc.push_back(vk::DeviceQueueCreateInfo()
@@ -704,8 +762,6 @@ bool DeviceManager_VK::createDevice()
 
     auto accelStructFeatures = vk::PhysicalDeviceAccelerationStructureFeaturesKHR()
         .setAccelerationStructure(true);
-    auto bufferAddressFeatures = vk::PhysicalDeviceBufferAddressFeaturesEXT()
-        .setBufferDeviceAddress(true);
     auto rayPipelineFeatures = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR()
         .setRayTracingPipeline(true)
         .setRayTraversalPrimitiveCulling(true);
@@ -718,15 +774,18 @@ bool DeviceManager_VK::createDevice()
         .setPipelineFragmentShadingRate(true)
         .setPrimitiveFragmentShadingRate(true)
         .setAttachmentFragmentShadingRate(true);
+    auto vulkan13features = vk::PhysicalDeviceVulkan13Features()
+        .setSynchronization2(synchronization2Supported)
+        .setMaintenance4(maintenance4Features.maintenance4);
 
-    void* pNext = nullptr;
-#define APPEND_EXTENSION(condition, desc) if (condition) { (desc).pNext = pNext; pNext = &(desc); }  // NOLINT(cppcoreguidelines-macro-usage)
+    pNext = nullptr;
     APPEND_EXTENSION(accelStructSupported, accelStructFeatures)
-    APPEND_EXTENSION(bufferAddressSupported, bufferAddressFeatures)
     APPEND_EXTENSION(rayPipelineSupported, rayPipelineFeatures)
     APPEND_EXTENSION(rayQuerySupported, rayQueryFeatures)
     APPEND_EXTENSION(meshletsSupported, meshletFeatures)
     APPEND_EXTENSION(vrsSupported, vrsFeatures)
+    APPEND_EXTENSION(physicalDeviceProperties.apiVersion >= VK_API_VERSION_1_3, vulkan13features)
+    APPEND_EXTENSION(physicalDeviceProperties.apiVersion < VK_API_VERSION_1_3 && maintenance4Supported, maintenance4Features);
 #undef APPEND_EXTENSION
 
     auto deviceFeatures = vk::PhysicalDeviceFeatures()
@@ -745,6 +804,7 @@ bool DeviceManager_VK::createDevice()
         .setDescriptorBindingVariableDescriptorCount(true)
         .setTimelineSemaphore(true)
         .setShaderSampledImageArrayNonUniformIndexing(true)
+        .setBufferDeviceAddress(bufferDeviceAddressFeatures.bufferDeviceAddress)
         .setPNext(pNext);
 
     auto layerVec = stringSetToVector(enabledExtensions.layers);
@@ -766,7 +826,7 @@ bool DeviceManager_VK::createDevice()
     const vk::Result res = m_VulkanPhysicalDevice.createDevice(&deviceDesc, nullptr, &m_VulkanDevice);
     if (res != vk::Result::eSuccess)
     {
-        log::error("Failed to create a Vulkan physical device, error code = %s", nvrhi::vulkan::resultToString(res));
+        log::error("Failed to create a Vulkan physical device, error code = %s", nvrhi::vulkan::resultToString(VkResult(res)));
         return false;
     }
 
@@ -779,9 +839,8 @@ bool DeviceManager_VK::createDevice()
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(m_VulkanDevice);
 
-    // stash the renderer string
-    auto prop = m_VulkanPhysicalDevice.getProperties();
-    m_RendererString = std::string(prop.deviceName.data());
+    // remember the bufferDeviceAddress feature enablement
+    m_BufferDeviceAddressSupported = vulkan12features.bufferDeviceAddress;
 
     log::message(m_DeviceParams.infoLogSeverity, "Created Vulkan device: %s", m_RendererString.c_str());
 
@@ -844,6 +903,7 @@ bool DeviceManager_VK::createSwapChain()
                     .setImageArrayLayers(1)
                     .setImageUsage(vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled)
                     .setImageSharingMode(enableSwapChainSharing ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive)
+                    .setFlags(m_SwapChainMutableFormatSupported ? vk::SwapchainCreateFlagBitsKHR::eMutableFormat : vk::SwapchainCreateFlagBitsKHR(0))
                     .setQueueFamilyIndexCount(enableSwapChainSharing ? uint32_t(queues.size()) : 0)
                     .setPQueueFamilyIndices(enableSwapChainSharing ? queues.data() : nullptr)
                     .setPreTransform(vk::SurfaceTransformFlagBitsKHR::eIdentity)
@@ -851,11 +911,34 @@ bool DeviceManager_VK::createSwapChain()
                     .setPresentMode(m_DeviceParams.vsyncEnabled ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eImmediate)
                     .setClipped(true)
                     .setOldSwapchain(nullptr);
+    
+    std::vector<vk::Format> imageFormats = { m_SwapChainFormat.format };
+    switch(m_SwapChainFormat.format)
+    {
+        case vk::Format::eR8G8B8A8Unorm:
+            imageFormats.push_back(vk::Format::eR8G8B8A8Srgb);
+            break;
+        case vk::Format::eR8G8B8A8Srgb:
+            imageFormats.push_back(vk::Format::eR8G8B8A8Unorm);
+            break;
+        case vk::Format::eB8G8R8A8Unorm:
+            imageFormats.push_back(vk::Format::eB8G8R8A8Srgb);
+            break;
+        case vk::Format::eB8G8R8A8Srgb:
+            imageFormats.push_back(vk::Format::eB8G8R8A8Unorm);
+            break;
+    }
+
+    auto imageFormatListCreateInfo = vk::ImageFormatListCreateInfo()
+        .setViewFormats(imageFormats);
+
+    if (m_SwapChainMutableFormatSupported)
+        desc.pNext = &imageFormatListCreateInfo;
 
     const vk::Result res = m_VulkanDevice.createSwapchainKHR(&desc, nullptr, &m_SwapChain);
     if (res != vk::Result::eSuccess)
     {
-        log::error("Failed to create a Vulkan swap chain, error code = %s", nvrhi::vulkan::resultToString(res));
+        log::error("Failed to create a Vulkan swap chain, error code = %s", nvrhi::vulkan::resultToString(VkResult(res)));
         return false;
     }
 
@@ -951,6 +1034,7 @@ bool DeviceManager_VK::CreateDeviceAndSwapChain()
     deviceDesc.numInstanceExtensions = vecInstanceExt.size();
     deviceDesc.deviceExtensions = vecDeviceExt.data();
     deviceDesc.numDeviceExtensions = vecDeviceExt.size();
+    deviceDesc.bufferDeviceAddressSupported = m_BufferDeviceAddressSupported;
 
     m_NvrhiDevice = nvrhi::vulkan::createDevice(deviceDesc);
 

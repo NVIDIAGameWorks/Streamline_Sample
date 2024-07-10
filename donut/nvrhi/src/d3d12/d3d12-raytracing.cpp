@@ -32,6 +32,184 @@
 #include <list>
 #include <sstream>
 
+namespace
+{
+    class D3D12RaytracingGeometryDesc
+    {
+        struct RaytracingGeometryDesc
+        {
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+            NVAPI_D3D12_RAYTRACING_GEOMETRY_TYPE_EX type;
+#else
+            D3D12_RAYTRACING_GEOMETRY_TYPE type;
+#endif
+            D3D12_RAYTRACING_GEOMETRY_FLAGS flags;
+            union
+            {
+                D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC           triangles;
+                D3D12_RAYTRACING_GEOMETRY_AABBS_DESC               aabbs;
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+                NVAPI_D3D12_RAYTRACING_GEOMETRY_OMM_TRIANGLES_DESC ommTriangles;
+#endif
+#if NVRHI_WITH_NVAPI_DISPLACEMENT_MICROMAP
+                // Note: this union member is currently only used to pad the structure so that it's the same size as NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX.
+                // There is no support for Displacement Micro Maps in NVRHI API yet.
+                NVAPI_D3D12_RAYTRACING_GEOMETRY_DMM_TRIANGLES_DESC dmmTriangles;
+#endif
+            };
+        } m_data;
+    public:
+
+        constexpr void Validate()
+        {
+            {
+                constexpr size_t kSize = sizeof(D3D12_RAYTRACING_GEOMETRY_TYPE) + sizeof(D3D12_RAYTRACING_GEOMETRY_FLAGS) + std::max(sizeof(D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC), sizeof(D3D12_RAYTRACING_GEOMETRY_AABBS_DESC));
+                static_assert(sizeof(D3D12_RAYTRACING_GEOMETRY_DESC) == kSize);
+                static_assert(offsetof(D3D12_RAYTRACING_GEOMETRY_DESC, Type) == offsetof(RaytracingGeometryDesc, type));
+                static_assert(sizeof(D3D12_RAYTRACING_GEOMETRY_DESC::Type) == sizeof(RaytracingGeometryDesc::type));
+                static_assert(offsetof(D3D12_RAYTRACING_GEOMETRY_DESC, Flags) == offsetof(RaytracingGeometryDesc, flags));
+                static_assert(sizeof(D3D12_RAYTRACING_GEOMETRY_DESC::Flags) == sizeof(RaytracingGeometryDesc::flags));
+                static_assert(offsetof(D3D12_RAYTRACING_GEOMETRY_DESC, Triangles) == offsetof(RaytracingGeometryDesc, triangles));
+                static_assert(sizeof(D3D12_RAYTRACING_GEOMETRY_DESC::Triangles) == sizeof(RaytracingGeometryDesc::triangles));
+                static_assert(offsetof(D3D12_RAYTRACING_GEOMETRY_DESC, AABBs) == offsetof(RaytracingGeometryDesc, aabbs));
+                static_assert(sizeof(D3D12_RAYTRACING_GEOMETRY_DESC::AABBs) == sizeof(RaytracingGeometryDesc::aabbs));
+            }
+            {
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP || NVRHI_WITH_NVAPI_DISPLACEMENT_MICROMAP
+                static_assert(sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX) == sizeof(RaytracingGeometryDesc));
+                static_assert(offsetof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX, type) == offsetof(RaytracingGeometryDesc, type));
+                static_assert(sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX::type) == sizeof(RaytracingGeometryDesc::type));
+                static_assert(offsetof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX, flags) == offsetof(RaytracingGeometryDesc, flags));
+                static_assert(sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX::flags) == sizeof(RaytracingGeometryDesc::flags));
+                static_assert(offsetof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX, triangles) == offsetof(RaytracingGeometryDesc, triangles));
+                static_assert(sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX::triangles) == sizeof(RaytracingGeometryDesc::triangles));
+                static_assert(offsetof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX, aabbs) == offsetof(RaytracingGeometryDesc, aabbs));
+                static_assert(sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX::aabbs) == sizeof(RaytracingGeometryDesc::aabbs));
+#endif
+
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+                static_assert(offsetof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX, ommTriangles) == offsetof(RaytracingGeometryDesc, ommTriangles));
+                static_assert(sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX::ommTriangles) == sizeof(RaytracingGeometryDesc::ommTriangles));
+#endif
+#if NVRHI_WITH_NVAPI_DISPLACEMENT_MICROMAP
+                static_assert(offsetof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX, dmmTriangles) == offsetof(RaytracingGeometryDesc, dmmTriangles));
+                static_assert(sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX::dmmTriangles) == sizeof(RaytracingGeometryDesc::dmmTriangles));
+#endif
+            }
+        }
+
+        void SetFlags(D3D12_RAYTRACING_GEOMETRY_FLAGS flags) {
+            m_data.flags = flags;
+        }
+
+        void SetTriangles(const D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC& triangles) {
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+            m_data.type = NVAPI_D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES_EX;
+#else
+            m_data.type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+#endif
+            m_data.triangles = triangles;
+        }
+
+        void SetAABBs(const D3D12_RAYTRACING_GEOMETRY_AABBS_DESC& aabbs) {
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+            m_data.type = NVAPI_D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS_EX;
+#else
+            m_data.type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
+#endif
+            m_data.aabbs = aabbs;
+        }
+
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+        void SetOMMTriangles(const NVAPI_D3D12_RAYTRACING_GEOMETRY_OMM_TRIANGLES_DESC& ommTriangles) {
+            m_data.type = NVAPI_D3D12_RAYTRACING_GEOMETRY_TYPE_OMM_TRIANGLES_EX;
+            m_data.ommTriangles = ommTriangles;
+        }
+#endif
+    };
+
+    class D3D12BuildRaytracingAccelerationStructureInputs
+    {
+        struct BuildRaytracingAccelerationStructure
+        {
+            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE Type;
+            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS Flags;
+            UINT NumDescs;
+            D3D12_ELEMENTS_LAYOUT DescsLayout;
+
+            union
+            {
+                D3D12_GPU_VIRTUAL_ADDRESS                   InstanceDescs;
+                const D3D12RaytracingGeometryDesc* const* ppGeometryDescs;
+            };
+        } m_desc;
+
+        std::vector<D3D12RaytracingGeometryDesc> m_geomDescs;
+        std::vector<D3D12RaytracingGeometryDesc*> m_geomDescsPtr;
+
+    public:
+
+        void SetGeometryDescCount(uint32_t numDescs) {
+            m_geomDescs.resize(numDescs);
+            m_geomDescsPtr.resize(numDescs);
+            for (uint32_t i = 0; i < numDescs; ++i)
+                m_geomDescsPtr[i] = m_geomDescs.data() + i;
+            m_desc.ppGeometryDescs = m_geomDescsPtr.data();
+            m_desc.NumDescs = numDescs;
+            m_desc.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY_OF_POINTERS;
+        }
+
+        void SetType(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE type) {
+            m_desc.Type = type;
+        }
+
+        void SetFlags(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS flags) {
+            m_desc.Flags = flags;
+        }
+
+        void SetInstanceDescs(D3D12_GPU_VIRTUAL_ADDRESS instanceDescs, UINT numDescs) {
+            m_desc.InstanceDescs = instanceDescs;
+            m_desc.NumDescs = numDescs;
+        }
+
+        D3D12RaytracingGeometryDesc& GetGeometryDesc(uint32_t index) {
+            return m_geomDescs[index];
+        }
+
+        template<class T>
+        const T GetAs();
+    };
+
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+    template<>
+    const NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX D3D12BuildRaytracingAccelerationStructureInputs::GetAs<NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX>() {
+        NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX inputs = {};
+        inputs.type = m_desc.Type;
+        inputs.flags = (NVAPI_D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS_EX)m_desc.Flags;
+        inputs.numDescs = m_desc.NumDescs;
+        inputs.geometryDescStrideInBytes = sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX);
+        inputs.descsLayout = m_desc.DescsLayout;
+        inputs.instanceDescs = m_desc.InstanceDescs;
+        static_assert(sizeof(BuildRaytracingAccelerationStructure::ppGeometryDescs) == sizeof(BuildRaytracingAccelerationStructure::InstanceDescs));
+        static_assert(sizeof(NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX::ppGeometryDescs) == sizeof(NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX::instanceDescs));
+        return inputs;
+    }
+#endif
+
+    template<>
+    const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS D3D12BuildRaytracingAccelerationStructureInputs::GetAs<D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS>() {
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
+        inputs.Type = m_desc.Type;
+        inputs.Flags = m_desc.Flags;
+        inputs.NumDescs = m_desc.NumDescs;
+        inputs.DescsLayout = m_desc.DescsLayout;
+        inputs.InstanceDescs = m_desc.InstanceDescs;
+        static_assert(sizeof(BuildRaytracingAccelerationStructure::ppGeometryDescs) == sizeof(BuildRaytracingAccelerationStructure::InstanceDescs));
+        static_assert(sizeof(D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS::ppGeometryDescs) == sizeof(D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS::InstanceDescs));
+        return inputs;
+    }
+}
+
 namespace nvrhi::d3d12
 {
     uint32_t ShaderTable::getNumEntries() const
@@ -187,6 +365,32 @@ namespace nvrhi::d3d12
         return align(requiredSize, uint32_t(D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT));
     }
 
+    AccelStruct::~AccelStruct()
+    {
+#ifdef NVRHI_WITH_RTXMU
+        bool isManaged = desc.isTopLevel;
+        if (!isManaged && rtxmuId != ~0ull)
+        {
+            std::vector<uint64_t> delAccel = { rtxmuId };
+            m_Context.rtxMemUtil->RemoveAccelerationStructures(delAccel);
+            rtxmuId = ~0ull;
+        }
+#endif // NVRHI_WITH_RTXMU
+    }
+
+    Object OpacityMicromap::getNativeObject(ObjectType objectType)
+    {
+        if (dataBuffer)
+            return dataBuffer->getNativeObject(objectType);
+
+        return nullptr;
+    }
+
+    uint64_t OpacityMicromap::getDeviceAddress() const
+    {
+        return dataBuffer->gpuVA;
+    }
+
     Object AccelStruct::getNativeObject(ObjectType objectType)
     {
         if (dataBuffer)
@@ -204,77 +408,228 @@ namespace nvrhi::d3d12
         return dataBuffer->gpuVA;
     }
 
-    static void fillD3dGeometryDesc(D3D12_RAYTRACING_GEOMETRY_DESC& outD3dGeometryDesc, const rt::GeometryDesc& geometryDesc)
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+    static const NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT* CastToUsageCount(const nvrhi::rt::OpacityMicromapUsageCount* desc)
     {
+        static_assert(sizeof(nvrhi::rt::OpacityMicromapUsageCount) == sizeof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT));
+        static_assert(offsetof(nvrhi::rt::OpacityMicromapUsageCount, count) == offsetof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT, count));
+        static_assert(sizeof(nvrhi::rt::OpacityMicromapUsageCount::count) == sizeof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT::count));
+        static_assert(offsetof(nvrhi::rt::OpacityMicromapUsageCount, subdivisionLevel) == offsetof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT, subdivisionLevel));
+        static_assert(sizeof(nvrhi::rt::OpacityMicromapUsageCount::subdivisionLevel) == sizeof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT::subdivisionLevel));
+        static_assert(offsetof(nvrhi::rt::OpacityMicromapUsageCount, format) == offsetof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT, format));
+        static_assert(sizeof(nvrhi::rt::OpacityMicromapUsageCount::format) == sizeof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT::format));
+        return reinterpret_cast<const NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_USAGE_COUNT*>(desc);
+    }
+
+    static void fillD3dOpacityMicromapDesc(
+        NVAPI_D3D12_BUILD_RAYTRACING_OPACITY_MICROMAP_ARRAY_INPUTS& outD3dDesc,
+        const rt::OpacityMicromapDesc& desc) {
+        outD3dDesc.flags = (NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_BUILD_FLAGS)desc.flags;
+        outD3dDesc.numOMMUsageCounts = (NvU32)desc.counts.size();
+        outD3dDesc.pOMMUsageCounts = CastToUsageCount(desc.counts.data());
+        outD3dDesc.inputBuffer = checked_cast<Buffer*>(desc.inputBuffer)->gpuVA + desc.inputBufferOffset;
+        outD3dDesc.perOMMDescs = { checked_cast<Buffer*>(desc.perOmmDescs)->gpuVA + desc.perOmmDescsOffset, sizeof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_DESC) };
+    }
+#endif
+
+    static void fillD3dGeometryTrianglesDesc(D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC& outDxrTriangles, const rt::GeometryDesc& geometryDesc, D3D12_GPU_VIRTUAL_ADDRESS transform4x4)
+    {
+        const auto& triangles = geometryDesc.geometryData.triangles;
+
+        if (triangles.indexBuffer)
+            outDxrTriangles.IndexBuffer = checked_cast<Buffer*>(triangles.indexBuffer)->gpuVA + triangles.indexOffset;
+        else
+            outDxrTriangles.IndexBuffer = 0;
+
+        if (triangles.vertexBuffer)
+            outDxrTriangles.VertexBuffer.StartAddress = checked_cast<Buffer*>(triangles.vertexBuffer)->gpuVA + triangles.vertexOffset;
+        else
+            outDxrTriangles.VertexBuffer.StartAddress = 0;
+
+        outDxrTriangles.VertexBuffer.StrideInBytes = triangles.vertexStride;
+        outDxrTriangles.IndexFormat = getDxgiFormatMapping(triangles.indexFormat).srvFormat;
+        outDxrTriangles.VertexFormat = getDxgiFormatMapping(triangles.vertexFormat).srvFormat;
+        outDxrTriangles.IndexCount = triangles.indexCount;
+        outDxrTriangles.VertexCount = triangles.vertexCount;
+        outDxrTriangles.Transform3x4 = transform4x4;
+    }
+
+    static void fillD3dAABBDesc(D3D12_RAYTRACING_GEOMETRY_AABBS_DESC& outDxrAABB, const rt::GeometryDesc& geometryDesc)
+    {
+        const auto& aabbs = geometryDesc.geometryData.aabbs;
+
+        if (aabbs.buffer)
+            outDxrAABB.AABBs.StartAddress = checked_cast<Buffer*>(aabbs.buffer)->gpuVA + aabbs.offset;
+        else
+            outDxrAABB.AABBs.StartAddress = 0;
+
+        outDxrAABB.AABBs.StrideInBytes = aabbs.stride;
+        outDxrAABB.AABBCount = aabbs.count;
+    }
+
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+    static void fillOmmAttachmentDesc(NVAPI_D3D12_RAYTRACING_GEOMETRY_OMM_ATTACHMENT_DESC& ommAttachment, const rt::GeometryDesc& geometryDesc)
+    {
+        const auto& triangles = geometryDesc.geometryData.triangles;
+
+        // There's currently a bug that disables VMs if the input buffer is null.
+        // just assign 128 in case it's null and index buffer is set.
+        ommAttachment.opacityMicromapArray = triangles.opacityMicromap == nullptr ? 128 : checked_cast<OpacityMicromap*>(triangles.opacityMicromap)->getDeviceAddress();
+        ommAttachment.opacityMicromapBaseLocation = 0;
+        ommAttachment.opacityMicromapIndexBuffer.StartAddress = triangles.ommIndexBuffer == nullptr ? 0 : checked_cast<Buffer*>(triangles.ommIndexBuffer)->gpuVA + triangles.ommIndexBufferOffset;
+        ommAttachment.opacityMicromapIndexBuffer.StrideInBytes = triangles.ommIndexFormat == Format::R32_UINT ? 4 : 2;
+        ommAttachment.opacityMicromapIndexFormat = getDxgiFormatMapping(triangles.ommIndexFormat).srvFormat;
+
+        if (triangles.pOmmUsageCounts)
+        {
+			assert(triangles.opacityMicromap);
+            ommAttachment.pOMMUsageCounts = CastToUsageCount(triangles.pOmmUsageCounts);
+            ommAttachment.numOMMUsageCounts = triangles.numOmmUsageCounts;
+        }
+        else
+        {
+            ommAttachment.pOMMUsageCounts = nullptr;
+            ommAttachment.numOMMUsageCounts = 0;
+        }
+    }
+#endif
+
+    static void fillD3dGeometryDesc(D3D12RaytracingGeometryDesc& outD3dGeometryDesc, const rt::GeometryDesc& geometryDesc, D3D12_GPU_VIRTUAL_ADDRESS transform4x4)
+    {
+        outD3dGeometryDesc.SetFlags((D3D12_RAYTRACING_GEOMETRY_FLAGS)geometryDesc.flags);
+
         if (geometryDesc.geometryType == rt::GeometryType::Triangles)
         {
             const auto& triangles = geometryDesc.geometryData.triangles;
-            outD3dGeometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-            outD3dGeometryDesc.Flags = (D3D12_RAYTRACING_GEOMETRY_FLAGS)geometryDesc.flags;
-
-            if (triangles.indexBuffer)
-                outD3dGeometryDesc.Triangles.IndexBuffer = checked_cast<Buffer*>(triangles.indexBuffer)->gpuVA + triangles.indexOffset;
-            else
-                outD3dGeometryDesc.Triangles.IndexBuffer = 0;
-
-            if (triangles.vertexBuffer)
-                outD3dGeometryDesc.Triangles.VertexBuffer.StartAddress = checked_cast<Buffer*>(triangles.vertexBuffer)->gpuVA + triangles.vertexOffset;
-            else
-                outD3dGeometryDesc.Triangles.VertexBuffer.StartAddress = 0;
-
-            outD3dGeometryDesc.Triangles.VertexBuffer.StrideInBytes = triangles.vertexStride;
-            outD3dGeometryDesc.Triangles.IndexFormat = getDxgiFormatMapping(triangles.indexFormat).srvFormat;
-            outD3dGeometryDesc.Triangles.VertexFormat = getDxgiFormatMapping(triangles.vertexFormat).srvFormat;
-            outD3dGeometryDesc.Triangles.IndexCount = triangles.indexCount;
-            outD3dGeometryDesc.Triangles.VertexCount = triangles.vertexCount;
-            outD3dGeometryDesc.Triangles.Transform3x4 = 0;
+            if (triangles.opacityMicromap != nullptr || triangles.ommIndexBuffer != nullptr) {
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+                NVAPI_D3D12_RAYTRACING_GEOMETRY_OMM_TRIANGLES_DESC ommTriangles = {};
+                fillD3dGeometryTrianglesDesc(ommTriangles.triangles, geometryDesc, transform4x4);
+                fillOmmAttachmentDesc(ommTriangles.ommAttachment, geometryDesc);
+                outD3dGeometryDesc.SetOMMTriangles(ommTriangles);
+#else
+                utils::NotSupported();
+#endif
+            }
+            else {
+                D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC dxrTriangles = {};
+                fillD3dGeometryTrianglesDesc(dxrTriangles, geometryDesc, transform4x4);
+                outD3dGeometryDesc.SetTriangles(dxrTriangles);
+            }
         }
         else
         {
-            const auto& aabbs = geometryDesc.geometryData.aabbs;
-            outD3dGeometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
-            outD3dGeometryDesc.Flags = (D3D12_RAYTRACING_GEOMETRY_FLAGS)geometryDesc.flags;
-
-            if (aabbs.buffer)
-                outD3dGeometryDesc.AABBs.AABBs.StartAddress = checked_cast<Buffer*>(aabbs.buffer)->gpuVA + aabbs.offset;
-            else
-                outD3dGeometryDesc.AABBs.AABBs.StartAddress = 0;
-
-            outD3dGeometryDesc.AABBs.AABBs.StrideInBytes = aabbs.stride;
-            outD3dGeometryDesc.AABBs.AABBCount = aabbs.count;
+            D3D12_RAYTRACING_GEOMETRY_AABBS_DESC dxrAABBs = {};
+            fillD3dAABBDesc(dxrAABBs, geometryDesc);
+            outD3dGeometryDesc.SetAABBs(dxrAABBs);
         }
     }
 
-
-    rt::AccelStructHandle Device::createAccelStruct(const rt::AccelStructDesc& desc)
+    static void fillAsInputDescForPreBuildInfo(
+        D3D12BuildRaytracingAccelerationStructureInputs& outASInputs,
+        const rt::AccelStructDesc& desc)
     {
-        std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> d3dGeometryDescs;
-        d3dGeometryDescs.resize(desc.bottomLevelGeometries.size());
-
-        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS ASInputs;
         if (desc.isTopLevel)
         {
-            ASInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-            ASInputs.InstanceDescs = 0;
-            ASInputs.NumDescs = UINT(desc.topLevelMaxInstances);
+            outASInputs.SetType(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL);
+            outASInputs.SetFlags((D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS)desc.buildFlags);
+            outASInputs.SetInstanceDescs(D3D12_GPU_VIRTUAL_ADDRESS{ 0, }, (UINT)desc.topLevelMaxInstances);
         }
         else
         {
+            outASInputs.SetType(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL);
+            outASInputs.SetFlags((D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS)desc.buildFlags);
+            outASInputs.SetGeometryDescCount((UINT)desc.bottomLevelGeometries.size());
             for (uint32_t i = 0; i < desc.bottomLevelGeometries.size(); i++)
             {
-                fillD3dGeometryDesc(d3dGeometryDescs[i], desc.bottomLevelGeometries[i]);
+                const rt::GeometryDesc& srcDesc = desc.bottomLevelGeometries[i];
+                // useTransform sets a non-null dummy GPU VA. The reason is explained in the spec:
+                // "It (read: GetRaytracingAccelerationStructurePrebuildInfo) may not inspect/dereference
+                // any GPU virtual addresses, other than to check to see if a pointer is NULL or not,
+                // such as the optional Transform in D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC, without dereferencing it."
+                // Omitting this here will trigger a gpu hang due to incorrect memory calculation.
+                D3D12_GPU_VIRTUAL_ADDRESS transform4x4 = srcDesc.useTransform ? 16 : 0; 
+                D3D12RaytracingGeometryDesc& geomDesc = outASInputs.GetGeometryDesc(i);
+                fillD3dGeometryDesc(geomDesc, srcDesc, transform4x4);
             }
-
-            ASInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-            ASInputs.pGeometryDescs = d3dGeometryDescs.data();
-            ASInputs.NumDescs = UINT(d3dGeometryDescs.size());
         }
+    }
 
-        ASInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-        ASInputs.Flags = (D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS)desc.buildFlags;
+    rt::OpacityMicromapHandle Device::createOpacityMicromap([[maybe_unused]] const rt::OpacityMicromapDesc& desc)
+    {
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+        assert(m_OpacityMicromapSupported && "Opacity Micromap not supported");
+        NVAPI_D3D12_BUILD_RAYTRACING_OPACITY_MICROMAP_ARRAY_INPUTS inputs = {};
+        fillD3dOpacityMicromapDesc(inputs, desc);
 
+        NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO omPreBuildInfo = {};
+
+        NVAPI_GET_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO_PARAMS params = {};
+        params.version = NVAPI_GET_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO_PARAMS_VER;
+        params.pDesc = &inputs;
+        params.pInfo = &omPreBuildInfo;
+        NvAPI_Status status = NvAPI_D3D12_GetRaytracingOpacityMicromapArrayPrebuildInfo(m_Context.device5.Get(), &params);
+        assert(status == S_OK);
+        if (status != S_OK)
+            return nullptr;
+
+        OpacityMicromap* om = new OpacityMicromap(m_Context);
+        om->desc = desc;
+        om->compacted = false;
+
+        {
+            BufferDesc bufferDesc;
+            bufferDesc.canHaveUAVs = true;
+            bufferDesc.byteSize = omPreBuildInfo.resultDataMaxSizeInBytes;
+            bufferDesc.initialState = ResourceStates::OpacityMicromapWrite;
+            bufferDesc.keepInitialState = true;
+            bufferDesc.isAccelStructStorage = true;
+            bufferDesc.debugName = desc.debugName;
+            bufferDesc.isVirtual = false;
+            BufferHandle buffer = createBuffer(bufferDesc);
+            om->dataBuffer = checked_cast<Buffer*>(buffer.Get());
+            assert((om->dataBuffer->gpuVA % NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_BYTE_ALIGNMENT) == 0);
+        }
+        return rt::OpacityMicromapHandle::Create(om);
+#else
+        utils::NotSupported();
+        return nullptr;
+#endif
+    }
+
+    bool Device::GetAccelStructPreBuildInfo(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO& outPreBuildInfo, const rt::AccelStructDesc& desc) const
+    {
+        D3D12BuildRaytracingAccelerationStructureInputs ASInputs;
+        fillAsInputDescForPreBuildInfo(ASInputs, desc);
+
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+        if (m_NvapiIsInitialized)
+        {
+            const NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX inputs = ASInputs.GetAs<NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX>();
+
+            NVAPI_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_EX_PARAMS params;
+            params.version = NVAPI_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_EX_PARAMS_VER;
+            params.pDesc = &inputs;
+            params.pInfo = &outPreBuildInfo;
+
+            NvAPI_Status status = NvAPI_D3D12_GetRaytracingAccelerationStructurePrebuildInfoEx(m_Context.device5, &params);
+            assert(status == S_OK);
+            return status == S_OK;
+        }
+        else
+#endif
+        {
+            const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = ASInputs.GetAs<D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS>();
+            m_Context.device5->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &outPreBuildInfo);
+            return true;
+        }
+    }
+
+    rt::AccelStructHandle Device::createAccelStruct(const rt::AccelStructDesc& desc)
+    {
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO ASPreBuildInfo = {};
-        m_Context.device5->GetRaytracingAccelerationStructurePrebuildInfo(&ASInputs, &ASPreBuildInfo);
+        if (!GetAccelStructPreBuildInfo(ASPreBuildInfo, desc))
+            return nullptr;
 
         AccelStruct* as = new AccelStruct(m_Context);
         as->desc = desc;
@@ -349,6 +704,30 @@ namespace nvrhi::d3d12
         m_Context.device->CreateShaderResourceView(nullptr, &srvDesc, { descriptor });
     }
 
+    bool Device::setHlslExtensionsUAV(uint32_t slot)
+    {
+#if NVRHI_D3D12_WITH_NVAPI
+        if (GetNvapiIsInitialized())
+        {
+            NvAPI_Status status = NvAPI_D3D12_SetNvShaderExtnSlotSpaceLocalThread(m_Context.device.Get(), slot, 0);
+            if (status != S_OK)
+            {
+                m_Context.error("Failed to set NvAPI_D3D12_SetNvShaderExtnSlotSpaceLocalThread");
+                return false;
+            }
+            return true;
+        }
+        else
+        {
+            m_Context.error("HLSL extensions require an NVIDIA graphics device with NVAPI support");
+        }
+#else
+        (void)slot;
+        m_Context.error("This version of NVRHI does not support NVIDIA HLSL extensions, please rebuild with NVAPI.");
+#endif
+        return false;
+    }
+
 #define NEW_ON_STACK(T) (T*)alloca(sizeof(T))
     
     rt::PipelineHandle Device::createRayTracingPipeline(const rt::PipelineDesc& desc)
@@ -414,6 +793,7 @@ namespace nvrhi::d3d12
         std::vector<D3D12_HIT_GROUP_DESC> d3dHitGroups;
         std::unordered_map<IShader*, std::wstring> hitGroupShaderNames;
         std::vector<std::wstring> hitGroupExportNames;
+        hitGroupExportNames.reserve(desc.hitGroups.size());
 
         for (const rt::PipelineHitGroupDesc& hitGroupDesc : desc.hitGroups)
         {
@@ -634,12 +1014,28 @@ namespace nvrhi::d3d12
         pipelineDesc.NumSubobjects = static_cast<UINT>(d3dSubobjects.size());
         pipelineDesc.pSubobjects = d3dSubobjects.data();
 
+        if (desc.hlslExtensionsUAV >= 0)
+        {
+            if (!setHlslExtensionsUAV(desc.hlslExtensionsUAV))
+                return nullptr;
+        }
+
         HRESULT hr = m_Context.device5->CreateStateObject(&pipelineDesc, IID_PPV_ARGS(&pso->pipelineState));
+
+        if (desc.hlslExtensionsUAV >= 0)
+        {
+            // Disable the magic UAV slot - do it before the test for successful pipeline creation below
+            // to avoid leaving the slot set when there's an error in the pipeline.
+            if (!setHlslExtensionsUAV(0xFFFFFFFF))
+                return nullptr;
+        }
+
         if (FAILED(hr))
         {
             m_Context.error("Failed to create a DXR pipeline state object");
             return nullptr;
         }
+
 
         hr = pso->pipelineState->QueryInterface(IID_PPV_ARGS(&pso->pipelineInfo));
         if (FAILED(hr))
@@ -844,6 +1240,74 @@ namespace nvrhi::d3d12
         m_ActiveCommandList->commandList4->DispatchRays(&desc);
     }
 
+    void CommandList::buildOpacityMicromap([[maybe_unused]] rt::IOpacityMicromap* pOmm, [[maybe_unused]] const rt::OpacityMicromapDesc& desc) {
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+        OpacityMicromap* omm = checked_cast<OpacityMicromap*>(pOmm);
+
+        if (m_EnableAutomaticBarriers)
+        {
+            requireBufferState(desc.inputBuffer, ResourceStates::OpacityMicromapBuildInput);
+            requireBufferState(desc.perOmmDescs, ResourceStates::OpacityMicromapBuildInput);
+
+            requireBufferState(omm->dataBuffer, nvrhi::ResourceStates::OpacityMicromapWrite);
+        }
+
+        if (desc.trackLiveness)
+        {
+            m_Instance->referencedResources.push_back(desc.inputBuffer);
+            m_Instance->referencedResources.push_back(desc.perOmmDescs);
+            m_Instance->referencedResources.push_back(omm->dataBuffer);
+        }
+
+        commitBarriers();
+
+        NVAPI_D3D12_BUILD_RAYTRACING_OPACITY_MICROMAP_ARRAY_INPUTS inputs = {};
+        fillD3dOpacityMicromapDesc(inputs, desc);
+
+        NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO vmPreBuildInfo = {};
+
+        NVAPI_GET_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO_PARAMS prebuildParams;
+        prebuildParams.version = NVAPI_GET_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO_PARAMS_VER;
+        prebuildParams.pDesc = &inputs;
+        prebuildParams.pInfo = &vmPreBuildInfo;
+        NvAPI_Status status = NvAPI_D3D12_GetRaytracingOpacityMicromapArrayPrebuildInfo(m_Context.device5.Get(), &prebuildParams);
+        assert(status == S_OK);
+        if (status != S_OK)
+            return;
+
+        D3D12_GPU_VIRTUAL_ADDRESS scratchGpuVA = 0;
+        if (vmPreBuildInfo.scratchDataSizeInBytes != 0)
+        {
+            if (!m_DxrScratchManager.suballocateBuffer(vmPreBuildInfo.scratchDataSizeInBytes, m_ActiveCommandList->commandList, nullptr, nullptr, nullptr,
+                &scratchGpuVA, m_RecordingVersion, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT))
+            {
+                std::stringstream ss;
+                ss << "Couldn't suballocate a scratch buffer for VM " << utils::DebugNameToString(omm->desc.debugName) << " build. "
+                    "The build requires " << vmPreBuildInfo.scratchDataSizeInBytes << " bytes of scratch space.";
+
+                m_Context.error(ss.str());
+                return;
+            }
+        }
+
+        NVAPI_D3D12_BUILD_RAYTRACING_OPACITY_MICROMAP_ARRAY_DESC nativeDesc = {};
+        nativeDesc.destOpacityMicromapArrayData = omm->getDeviceAddress();
+        nativeDesc.inputs = inputs;
+        nativeDesc.scratchOpacityMicromapArrayData = scratchGpuVA;
+
+        NVAPI_BUILD_RAYTRACING_OPACITY_MICROMAP_ARRAY_PARAMS params;
+        params.version = NVAPI_BUILD_RAYTRACING_OPACITY_MICROMAP_ARRAY_PARAMS_VER;
+        params.pDesc = &nativeDesc;
+        params.numPostbuildInfoDescs = 0;
+        params.pPostbuildInfoDescs = nullptr;
+
+        status = NvAPI_D3D12_BuildRaytracingOpacityMicromapArray(m_ActiveCommandList->commandList4, &params);
+        assert(status == S_OK);
+#else
+        utils::NotSupported();
+#endif
+    }
+
     void CommandList::buildBottomLevelAccelStruct(rt::IAccelStruct* _as, const rt::GeometryDesc* pGeometries, size_t numGeometries, rt::AccelStructBuildFlags buildFlags)
     {
         AccelStruct* as = checked_cast<AccelStruct*>(_as);
@@ -854,44 +1318,31 @@ namespace nvrhi::d3d12
             assert(as->allowUpdate);
         }
 
-        std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> d3dGeometryDescs;
-        d3dGeometryDescs.resize(numGeometries);
-
         for (uint32_t i = 0; i < numGeometries; i++)
         {
             const auto& geometryDesc = pGeometries[i];
-            auto& d3dGeometryDesc = d3dGeometryDescs[i];
-
-            fillD3dGeometryDesc(d3dGeometryDesc, geometryDesc);
-
-            if (geometryDesc.useTransform)
-            {
-                void* cpuVA = nullptr;
-                D3D12_GPU_VIRTUAL_ADDRESS gpuVA = 0;
-                if (!m_UploadManager.suballocateBuffer(sizeof(rt::AffineTransform), nullptr, nullptr, nullptr, 
-                    &cpuVA, &gpuVA, m_RecordingVersion, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT))
-                {
-                    m_Context.error("Couldn't suballocate an upload buffer");
-                    return;
-                }
-
-                memcpy(cpuVA, &geometryDesc.transform, sizeof(rt::AffineTransform));
-
-                d3dGeometryDesc.Triangles.Transform3x4 = gpuVA;
-            }
-
             if (geometryDesc.geometryType == rt::GeometryType::Triangles)
             {
                 const auto& triangles = geometryDesc.geometryData.triangles;
+
+                OpacityMicromap* om = triangles.opacityMicromap ? checked_cast<OpacityMicromap*>(triangles.opacityMicromap) : nullptr;
 
                 if (m_EnableAutomaticBarriers)
                 {
                     requireBufferState(triangles.indexBuffer, ResourceStates::AccelStructBuildInput);
                     requireBufferState(triangles.vertexBuffer, ResourceStates::AccelStructBuildInput);
+                    if (om)
+                        requireBufferState(om->dataBuffer, ResourceStates::AccelStructBuildInput);
+                    if (triangles.ommIndexBuffer)
+                        requireBufferState(triangles.ommIndexBuffer, ResourceStates::AccelStructBuildInput);
                 }
 
                 m_Instance->referencedResources.push_back(triangles.indexBuffer);
                 m_Instance->referencedResources.push_back(triangles.vertexBuffer);
+                if (om && om->desc.trackLiveness)
+                    m_Instance->referencedResources.push_back(om);
+                if (triangles.ommIndexBuffer)
+                    m_Instance->referencedResources.push_back(triangles.ommIndexBuffer);
             }
             else
             {
@@ -908,19 +1359,40 @@ namespace nvrhi::d3d12
 
         commitBarriers();
 
-        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS ASInputs;
-        ASInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-        ASInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-        ASInputs.pGeometryDescs = d3dGeometryDescs.data();
-        ASInputs.NumDescs = UINT(d3dGeometryDescs.size());
-        ASInputs.Flags = (D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS)buildFlags;
+        D3D12BuildRaytracingAccelerationStructureInputs inputs;
+        inputs.SetType(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL);
         if (as->allowUpdate)
-            ASInputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE;
+            inputs.SetFlags((D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS)buildFlags | D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE);
+        else
+            inputs.SetFlags((D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS)buildFlags);
+
+        inputs.SetGeometryDescCount((UINT)numGeometries);
+        for (uint32_t i = 0; i < numGeometries; i++)
+        {
+            const auto& geometryDesc = pGeometries[i];
+
+            D3D12_GPU_VIRTUAL_ADDRESS gpuVA = 0;
+            if (geometryDesc.useTransform)
+            {
+                void* cpuVA = nullptr;
+                if (!m_UploadManager.suballocateBuffer(sizeof(rt::AffineTransform), nullptr, nullptr, nullptr,
+                    &cpuVA, &gpuVA, m_RecordingVersion, D3D12_RAYTRACING_TRANSFORM3X4_BYTE_ALIGNMENT))
+                {
+                    m_Context.error("Couldn't suballocate an upload buffer");
+                    return;
+                }
+
+                memcpy(cpuVA, &geometryDesc.transform, sizeof(rt::AffineTransform));
+            }
+
+            D3D12RaytracingGeometryDesc& geomDesc = inputs.GetGeometryDesc(i);
+            fillD3dGeometryDesc(geomDesc, geometryDesc, gpuVA);
+        }
 
 #ifdef NVRHI_WITH_RTXMU
         std::vector<uint64_t> accelStructsToBuild;
         std::vector<D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS> buildInputs;
-        buildInputs.push_back(ASInputs);
+        buildInputs.push_back(inputs.GetAs<D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS>());
 
         if(as->rtxmuId == ~0ull)
         {
@@ -947,7 +1419,9 @@ namespace nvrhi::d3d12
         }
 #else
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO ASPreBuildInfo = {};
-        m_Context.device5->GetRaytracingAccelerationStructurePrebuildInfo(&ASInputs, &ASPreBuildInfo);
+
+        if (!checked_cast<d3d12::Device*>(m_Device)->GetAccelStructPreBuildInfo(ASPreBuildInfo, as->getDesc()))
+            return;
 
         if (ASPreBuildInfo.ResultDataMaxSizeInBytes > as->dataBuffer->desc.byteSize)
         {
@@ -976,21 +1450,40 @@ namespace nvrhi::d3d12
             return;
         }
 
-        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {};
-        buildDesc.Inputs = ASInputs;
-        buildDesc.ScratchAccelerationStructureData = scratchGpuVA;
-        buildDesc.DestAccelerationStructureData = as->dataBuffer->gpuVA;
-        buildDesc.SourceAccelerationStructureData = performUpdate ? as->dataBuffer->gpuVA : 0;
-
         if (m_EnableAutomaticBarriers)
         {
             requireBufferState(as->dataBuffer, nvrhi::ResourceStates::AccelStructWrite);
         }
         commitBarriers();
 
-        m_ActiveCommandList->commandList4->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+#if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+        if (checked_cast<d3d12::Device*>(m_Device)->GetNvapiIsInitialized())
+        {
+            NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC_EX buildDesc = {};
+            buildDesc.inputs = inputs.GetAs<NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX>();
+            buildDesc.scratchAccelerationStructureData = scratchGpuVA;
+            buildDesc.destAccelerationStructureData = as->dataBuffer->gpuVA;
+            buildDesc.sourceAccelerationStructureData = performUpdate ? as->dataBuffer->gpuVA : 0;
 
+            NVAPI_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_EX_PARAMS params = {};
+            params.version = NVAPI_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_EX_PARAMS_VER;
+            params.pDesc = &buildDesc;
+            params.numPostbuildInfoDescs = 0;
+            params.pPostbuildInfoDescs = nullptr;
+            [[maybe_unused]] NvAPI_Status status = NvAPI_D3D12_BuildRaytracingAccelerationStructureEx(m_ActiveCommandList->commandList4, &params);
+            assert(status == S_OK);
+        }
+        else
 #endif
+        {
+            D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {};
+            buildDesc.Inputs = inputs.GetAs<D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS>();
+            buildDesc.ScratchAccelerationStructureData = scratchGpuVA;
+            buildDesc.DestAccelerationStructureData = as->dataBuffer->gpuVA;
+            buildDesc.SourceAccelerationStructureData = performUpdate ? as->dataBuffer->gpuVA : 0;
+            m_ActiveCommandList->commandList4->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+        }
+#endif // NVRHI_WITH_RTXMU
 
         if (as->desc.trackLiveness)
             m_Instance->referencedResources.push_back(as);
@@ -1018,6 +1511,9 @@ namespace nvrhi::d3d12
 
     void CommandList::buildTopLevelAccelStructInternal(AccelStruct* as, D3D12_GPU_VIRTUAL_ADDRESS instanceData, size_t numInstances, rt::AccelStructBuildFlags buildFlags)
     {
+        // Remove the internal flag
+        buildFlags = buildFlags & ~rt::AccelStructBuildFlags::AllowEmptyInstances;
+
         const bool performUpdate = (buildFlags & rt::AccelStructBuildFlags::PerformUpdate) != 0;
 
         if (performUpdate)
@@ -1090,26 +1586,31 @@ namespace nvrhi::d3d12
             const rt::InstanceDesc& instance = pInstances[i];
             D3D12_RAYTRACING_INSTANCE_DESC& dxrInstance = as->dxrInstances[i];
 
-            AccelStruct* blas = checked_cast<AccelStruct*>(instance.bottomLevelAS);
+            if (instance.bottomLevelAS)
+            {
+                AccelStruct* blas = checked_cast<AccelStruct*>(instance.bottomLevelAS);
 
-            if (blas->desc.trackLiveness)
-                as->bottomLevelASes.push_back(blas);
+                if (blas->desc.trackLiveness)
+                    as->bottomLevelASes.push_back(blas);
 
-            static_assert(sizeof(dxrInstance) == sizeof(instance));
-            memcpy(&dxrInstance, &instance, sizeof(instance));
+                static_assert(sizeof(dxrInstance) == sizeof(instance));
+                memcpy(&dxrInstance, &instance, sizeof(instance));
 
 #ifdef NVRHI_WITH_RTXMU
-            dxrInstance.AccelerationStructure = m_Context.rtxMemUtil->GetAccelStructGPUVA(blas->rtxmuId);
+                dxrInstance.AccelerationStructure = m_Context.rtxMemUtil->GetAccelStructGPUVA(blas->rtxmuId);
 #else
-            dxrInstance.AccelerationStructure = blas->dataBuffer->gpuVA;
-#endif
+                dxrInstance.AccelerationStructure = blas->dataBuffer->gpuVA;
 
-#ifndef NVRHI_WITH_RTXMU
-            if (m_EnableAutomaticBarriers)
-            {
-                requireBufferState(blas->dataBuffer, nvrhi::ResourceStates::AccelStructBuildBlas);
-            }
+                if (m_EnableAutomaticBarriers)
+                {
+                    requireBufferState(blas->dataBuffer, nvrhi::ResourceStates::AccelStructBuildBlas);
+                }
 #endif
+            }
+            else // !instance.bottomLevelAS
+            {
+                dxrInstance.AccelerationStructure = 0;
+            }
         }
 
 #ifdef NVRHI_WITH_RTXMU

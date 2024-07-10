@@ -102,11 +102,12 @@ namespace nvrhi::vulkan
     static vk::ImageUsageFlags pickImageUsage(const TextureDesc& d)
     {
         const FormatInfo& formatInfo = getFormatInfo(d.format);
-
-        // xxxnsubtil: may want to consider exposing this through nvrhi instead
+        
         vk::ImageUsageFlags ret = vk::ImageUsageFlagBits::eTransferSrc |
-                                  vk::ImageUsageFlagBits::eTransferDst |
-                                  vk::ImageUsageFlagBits::eSampled;
+                                  vk::ImageUsageFlagBits::eTransferDst;
+        
+        if (d.isShaderResource)
+            ret |= vk::ImageUsageFlagBits::eSampled;
 
         if (d.isRenderTarget)
         {
@@ -200,28 +201,18 @@ namespace nvrhi::vulkan
         return flags;
     }
 
-    vk::ImageCreateFlagBits pickImageFlags(const TextureDesc& d)
+    vk::ImageCreateFlags pickImageFlags(const TextureDesc& d)
     {
-        switch (d.dimension)
-        {
-        case TextureDimension::TextureCube:
-        case TextureDimension::TextureCubeArray:
-            return vk::ImageCreateFlagBits::eCubeCompatible;
+        vk::ImageCreateFlags flags = vk::ImageCreateFlags(0);
 
-        case TextureDimension::Texture2DArray:
-        case TextureDimension::Texture2DMSArray:
-        case TextureDimension::Texture1DArray:
-        case TextureDimension::Texture1D:
-        case TextureDimension::Texture2D:
-        case TextureDimension::Texture3D:
-        case TextureDimension::Texture2DMS:
-            return (vk::ImageCreateFlagBits)0;
+        if (d.dimension == TextureDimension::TextureCube || 
+            d.dimension == TextureDimension::TextureCubeArray)
+            flags |= vk::ImageCreateFlagBits::eCubeCompatible;
 
-        case TextureDimension::Unknown:
-        default:
-            utils::InvalidEnum();
-            return (vk::ImageCreateFlagBits)0;
-        }
+        if (d.isTypeless)
+            flags |= vk::ImageCreateFlagBits::eMutableFormat;
+
+        return flags;
     }
 
     // fills out all info fields in Texture based on a TextureDesc
@@ -235,7 +226,7 @@ namespace nvrhi::vulkan
         vk::Format format = vk::Format(convertFormat(desc.format));
         vk::ImageUsageFlags usage = pickImageUsage(desc);
         vk::SampleCountFlagBits sampleCount = pickImageSampleCount(desc);
-        vk::ImageCreateFlagBits flags = pickImageFlags(desc);
+        vk::ImageCreateFlags flags = pickImageFlags(desc);
 
         texture->imageInfo = vk::ImageCreateInfo()
                                 .setImageType(type)
@@ -248,9 +239,22 @@ namespace nvrhi::vulkan
                                 .setSharingMode(vk::SharingMode::eExclusive)
                                 .setSamples(sampleCount)
                                 .setFlags(flags);
+        
+#if _WIN32
+        const auto handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32;
+#else
+        const auto handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+#endif
+
+        texture->externalMemoryImageInfo = vk::ExternalMemoryImageCreateInfo()
+            .setHandleTypes(handleType);
+
+        if (desc.sharedResourceFlags == SharedResourceFlags::Shared)
+            texture->imageInfo.setPNext(&texture->externalMemoryImageInfo);
     }
 
-    TextureSubresourceView& Texture::getSubresourceView(const TextureSubresourceSet& subresource, TextureDimension dimension, TextureSubresourceViewType viewtype)
+    TextureSubresourceView& Texture::getSubresourceView(const TextureSubresourceSet& subresource, TextureDimension dimension,
+        Format format, TextureSubresourceViewType viewtype)
     {
         // This function is called from createBindingSet etc. and therefore free-threaded.
         // It modifies the subresourceViews map associated with the texture.
@@ -259,7 +263,10 @@ namespace nvrhi::vulkan
         if (dimension == TextureDimension::Unknown)
             dimension = desc.dimension;
 
-        auto cachekey = std::make_tuple(subresource,viewtype, dimension);
+        if (format == Format::UNKNOWN)
+            format = desc.format;
+
+        auto cachekey = std::make_tuple(subresource, viewtype, dimension, format);
         auto iter = subresourceViews.find(cachekey);
         if (iter != subresourceViews.end())
         {
@@ -271,9 +278,9 @@ namespace nvrhi::vulkan
 
         view.subresource = subresource;
 
-        auto vkformat = nvrhi::vulkan::convertFormat(desc.format);
+        auto vkformat = nvrhi::vulkan::convertFormat(format);
 
-        vk::ImageAspectFlags aspectflags = guessSubresourceImageAspectFlags(vkformat, viewtype);
+        vk::ImageAspectFlags aspectflags = guessSubresourceImageAspectFlags(vk::Format(vkformat), viewtype);
         view.subresourceRange = vk::ImageSubresourceRange()
                                     .setAspectMask(aspectflags)
                                     .setBaseMipLevel(subresource.baseMipLevel)
@@ -286,7 +293,7 @@ namespace nvrhi::vulkan
         auto viewInfo = vk::ImageViewCreateInfo()
                             .setImage(image)
                             .setViewType(imageViewType)
-                            .setFormat(vkformat)
+                            .setFormat(vk::Format(vkformat))
                             .setSubresourceRange(view.subresourceRange);
 
         if (viewtype == TextureSubresourceViewType::StencilOnly)
@@ -322,6 +329,15 @@ namespace nvrhi::vulkan
             res = m_Allocator.allocateTextureMemory(texture);
             ASSERT_VK_OK(res);
             CHECK_VK_FAIL(res)
+
+            if((desc.sharedResourceFlags & SharedResourceFlags::Shared) != 0)
+            {
+#ifdef _WIN32
+                texture->sharedHandle = m_Context.device.getMemoryWin32HandleKHR({ texture->memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32 });
+#else
+                texture->sharedHandle = (void*)(size_t)m_Context.device.getMemoryFdKHR({ texture->memory, vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd });
+#endif
+            }
 
             m_Context.nameVKObject(texture->memory, vk::DebugReportObjectTypeEXT::eDeviceMemory, desc.debugName.c_str());
         }
@@ -379,14 +395,14 @@ namespace nvrhi::vulkan
             resolvedSrcSlice.arraySlice, 1
         );
 
-        const auto& srcSubresourceView = src->getSubresourceView(srcSubresource, TextureDimension::Unknown);
+        const auto& srcSubresourceView = src->getSubresourceView(srcSubresource, TextureDimension::Unknown, Format::UNKNOWN);
 
         TextureSubresourceSet dstSubresource = TextureSubresourceSet(
             resolvedDstSlice.mipLevel, 1,
             resolvedDstSlice.arraySlice, 1
         );
 
-        const auto& dstSubresourceView = dst->getSubresourceView(dstSubresource, TextureDimension::Unknown);
+        const auto& dstSubresourceView = dst->getSubresourceView(dstSubresource, TextureDimension::Unknown, Format::UNKNOWN);
 
         auto imageCopy = vk::ImageCopy()
                             .setSrcSubresource(vk::ImageSubresourceLayers()
@@ -523,9 +539,9 @@ namespace nvrhi::vulkan
                 .setSrcSubresource(srcLayers)
                 .setDstSubresource(dstLayers)
                 .setExtent(vk::Extent3D(
-                    dest->desc.width >> dstLayers.mipLevel, 
-                    dest->desc.height >> dstLayers.mipLevel, 
-                    dest->desc.depth >> dstLayers.mipLevel)));
+                    std::max(dest->desc.width >> dstLayers.mipLevel, 1u), 
+                    std::max(dest->desc.height >> dstLayers.mipLevel, 1u),
+                    std::max(dest->desc.depth >> dstLayers.mipLevel, 1u))));
         }
 
         if (m_EnableAutomaticBarriers)
@@ -637,6 +653,8 @@ namespace nvrhi::vulkan
             return Object(image);
         case ObjectTypes::VK_DeviceMemory:
             return Object(memory);
+        case ObjectTypes::SharedHandle:
+            return Object(sharedHandle);
         default:
             return nullptr;
         }
@@ -659,7 +677,7 @@ namespace nvrhi::vulkan
             else if(!formatInfo.hasDepth && formatInfo.hasStencil)
                 viewType = TextureSubresourceViewType::StencilOnly;
 
-            return Object(getSubresourceView(subresources, dimension, viewType).view);
+            return Object(getSubresourceView(subresources, dimension, format, viewType).view);
         }
         default:
             return nullptr;

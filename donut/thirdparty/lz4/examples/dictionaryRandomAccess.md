@@ -1,4 +1,4 @@
-# LZ4 API Example : Dictionary Random Access
+﻿# LZ4 API Example : Dictionary Random Access
 
 `dictionaryRandomAccess.c` is LZ4 API example which implements dictionary compression and random access decompression.
 

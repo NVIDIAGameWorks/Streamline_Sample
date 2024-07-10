@@ -33,6 +33,21 @@
 #include <nvapi.h>
 #endif
 
+// There's no version check available in the nvapi header,
+// instead to check if the NvAPI linked is OMM compatible version (>520) we look for one of the defines it adds...
+#if NVRHI_D3D12_WITH_NVAPI && defined(NVAPI_GET_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO_PARAMS_VER)
+#define NVRHI_WITH_NVAPI_OPACITY_MICROMAP (1)
+#else
+#define NVRHI_WITH_NVAPI_OPACITY_MICROMAP (0)
+#endif
+
+// ... same for DMM compatible versions (>=535) we look for one of the defines it adds
+#if NVRHI_D3D12_WITH_NVAPI && defined(NVAPI_GET_RAYTRACING_DISPLACEMENT_MICROMAP_ARRAY_PREBUILD_INFO_PARAMS_VER)
+#define NVRHI_WITH_NVAPI_DISPLACEMENT_MICROMAP (1)
+#else
+#define NVRHI_WITH_NVAPI_DISPLACEMENT_MICROMAP (0)
+#endif
+
 #include <bitset>
 #include <memory>
 #include <queue>
@@ -91,6 +106,7 @@ namespace nvrhi::d3d12
 #endif
 
         RefCountPtr<ID3D12CommandSignature> drawIndirectSignature;
+        RefCountPtr<ID3D12CommandSignature> drawIndexedIndirectSignature;
         RefCountPtr<ID3D12CommandSignature> dispatchIndirectSignature;
         RefCountPtr<ID3D12QueryHeap> timerQueryHeap;
         RefCountPtr<Buffer> timerQueryResolveBuffer;
@@ -219,6 +235,7 @@ namespace nvrhi::d3d12
         const D3D12_RESOURCE_DESC resourceDesc;
         RefCountPtr<ID3D12Resource> resource;
         uint8_t planeCount = 1;
+        HANDLE sharedHandle = nullptr;
         HeapHandle heap;
 
         Texture(const Context& context, DeviceResources& resources, TextureDesc desc, const D3D12_RESOURCE_DESC& resourceDesc)
@@ -268,6 +285,7 @@ namespace nvrhi::d3d12
 
         RefCountPtr<ID3D12Fence> lastUseFence;
         uint64_t lastUseFenceValue = 0;
+        HANDLE sharedHandle = nullptr;
 
         Buffer(const Context& context, DeviceResources& resources, BufferDesc desc)
             : BufferStateExtension(this->desc)
@@ -284,7 +302,7 @@ namespace nvrhi::d3d12
 
         void postCreate();
         DescriptorIndex getClearUAV();
-        void createCBV(size_t descriptor) const;
+        void createCBV(size_t descriptor, BufferRange range) const;
         void createSRV(size_t descriptor, Format format, BufferRange range, ResourceType type) const;
         void createUAV(size_t descriptor, Format format, BufferRange range, ResourceType type) const;
         static void createNullSRV(size_t descriptor, Format format, const Context& context);
@@ -452,7 +470,7 @@ namespace nvrhi::d3d12
     {
     public:
         FramebufferDesc desc;
-        FramebufferInfo framebufferInfo;
+        FramebufferInfoEx framebufferInfo;
 
         static_vector<TextureHandle, c_MaxRenderTargets + 1> textures;
         static_vector<DescriptorIndex, c_MaxRenderTargets> RTVs;
@@ -467,7 +485,7 @@ namespace nvrhi::d3d12
         ~Framebuffer() override;
 
         const FramebufferDesc& getDesc() const override { return desc; }
-        const FramebufferInfo& getFramebufferInfo() const override { return framebufferInfo; }
+        const FramebufferInfoEx& getFramebufferInfo() const override { return framebufferInfo; }
 
     private:
         DeviceResources& m_Resources;
@@ -585,7 +603,7 @@ namespace nvrhi::d3d12
         DeviceResources& m_Resources;
     };
 
-    DX12_ViewportState convertViewportState(const RasterState& rasterState, const FramebufferInfo& framebufferInfo, const ViewportState& vpState);
+    DX12_ViewportState convertViewportState(const RasterState& rasterState, const FramebufferInfoEx& framebufferInfo, const ViewportState& vpState);
 
     class TextureState
     {
@@ -653,6 +671,28 @@ namespace nvrhi::d3d12
         [[nodiscard]] std::shared_ptr<BufferChunk> createChunk(size_t size) const;
     };
 
+    class OpacityMicromap : public RefCounter<rt::IOpacityMicromap>
+    {
+    public:
+        RefCountPtr<d3d12::Buffer> dataBuffer;
+        rt::OpacityMicromapDesc desc;
+        bool allowUpdate = false;
+        bool compacted = false;
+
+        OpacityMicromap(const Context& context)
+            : m_Context(context)
+        { }
+
+        Object getNativeObject(ObjectType objectType) override;
+
+        const rt::OpacityMicromapDesc& getDesc() const override { return desc; }
+        bool isCompacted() const override { return compacted; }
+        uint64_t getDeviceAddress() const override;
+
+    private:
+        const Context& m_Context;
+    };
+
     class AccelStruct : public RefCounter<rt::IAccelStruct>
     {
     public:
@@ -670,6 +710,8 @@ namespace nvrhi::d3d12
         AccelStruct(const Context& context)
             : m_Context(context)
         { }
+
+        ~AccelStruct() override;
 
         void createSRV(size_t descriptor) const;
 
@@ -853,7 +895,8 @@ namespace nvrhi::d3d12
         void setGraphicsState(const GraphicsState& state) override;
         void draw(const DrawArguments& args) override;
         void drawIndexed(const DrawArguments& args) override;
-        void drawIndirect(uint32_t offsetBytes) override;
+        void drawIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
+        void drawIndexedIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
 
         void setComputeState(const ComputeState& state) override;
         void dispatch(uint32_t groupsX, uint32_t groupsY = 1, uint32_t groupsZ = 1) override;
@@ -865,6 +908,7 @@ namespace nvrhi::d3d12
         void setRayTracingState(const rt::State& state) override;
         void dispatchRays(const rt::DispatchRaysArguments& args) override;
 
+        void buildOpacityMicromap(rt::IOpacityMicromap* omm, const rt::OpacityMicromapDesc& desc) override;
         void buildBottomLevelAccelStruct(rt::IAccelStruct* as, const rt::GeometryDesc* pGeometries, size_t numGeometries, rt::AccelStructBuildFlags buildFlags) override;
         void compactBottomLevelAccelStructs() override;
         void buildTopLevelAccelStruct(rt::IAccelStruct* as, const rt::InstanceDesc* pInstances, size_t numInstances, rt::AccelStructBuildFlags buildFlags) override;
@@ -1054,6 +1098,7 @@ namespace nvrhi::d3d12
         void resizeDescriptorTable(IDescriptorTable* descriptorTable, uint32_t newSize, bool keepContents = true) override;
         bool writeDescriptorTable(IDescriptorTable* descriptorTable, const BindingSetItem& item) override;
 
+        rt::OpacityMicromapHandle createOpacityMicromap(const rt::OpacityMicromapDesc& desc) override;
         rt::AccelStructHandle createAccelStruct(const rt::AccelStructDesc& desc) override;
         MemoryRequirements getAccelStructMemoryRequirements(rt::IAccelStruct* as) override;
         bool bindAccelStructMemory(rt::IAccelStruct* as, IHeap* heap, uint64_t offset) override;
@@ -1080,6 +1125,11 @@ namespace nvrhi::d3d12
 
         Context& getContext() { return m_Context; }
 
+        bool setHlslExtensionsUAV(uint32_t slot);
+
+        bool GetAccelStructPreBuildInfo(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO& outPreBuildInfo, const rt::AccelStructDesc& desc) const;
+
+        bool GetNvapiIsInitialized() const { return m_NvapiIsInitialized; }
     private:
         Context m_Context;
         DeviceResources m_Resources;
@@ -1098,6 +1148,8 @@ namespace nvrhi::d3d12
         bool m_TraceRayInlineSupported = false;
         bool m_MeshletsSupported = false;
         bool m_VariableRateShadingSupported = false;
+        bool m_OpacityMicromapSupported = false;
+        bool m_ShaderExecutionReorderingSupported = false;
 
         D3D12_FEATURE_DATA_D3D12_OPTIONS  m_Options = {};
         D3D12_FEATURE_DATA_D3D12_OPTIONS5 m_Options5 = {};

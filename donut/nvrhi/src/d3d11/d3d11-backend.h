@@ -55,6 +55,7 @@ namespace nvrhi::d3d11
     {
         RefCountPtr<ID3D11Device> device;
         RefCountPtr<ID3D11DeviceContext> immediateContext;
+        RefCountPtr<ID3D11DeviceContext1> immediateContext1;
         RefCountPtr<ID3D11Buffer> pushConstantBuffer;
         IMessageCallback* messageCallback = nullptr;
         bool nvapiAvailable = false;
@@ -67,6 +68,7 @@ namespace nvrhi::d3d11
     public:
         TextureDesc desc;
         RefCountPtr<ID3D11Resource> resource;
+        HANDLE sharedHandle = nullptr;
 
         Texture(const Context& context) : m_Context(context) { }
         const TextureDesc& getDesc() const override { return desc; }
@@ -101,6 +103,7 @@ namespace nvrhi::d3d11
     public:
         BufferDesc desc;
         RefCountPtr<ID3D11Buffer> resource;
+        HANDLE sharedHandle = nullptr;
         
         Buffer(const Context& context) : m_Context(context) { }
         const BufferDesc& getDesc() const override { return desc; }
@@ -176,12 +179,12 @@ namespace nvrhi::d3d11
     {
     public:
         FramebufferDesc desc;
-        FramebufferInfo framebufferInfo;
+        FramebufferInfoEx framebufferInfo;
         static_vector<RefCountPtr<ID3D11RenderTargetView>, c_MaxRenderTargets> RTVs;
         RefCountPtr<ID3D11DepthStencilView> DSV;
         
         const FramebufferDesc& getDesc() const override { return desc; }
-        const FramebufferInfo& getFramebufferInfo() const override { return framebufferInfo; }
+        const FramebufferInfoEx& getFramebufferInfo() const override { return framebufferInfo; }
     };
 
     struct DX11_ViewportState
@@ -255,6 +258,8 @@ namespace nvrhi::d3d11
         uint32_t maxSamplerSlot = 0;
 
         ID3D11Buffer* constantBuffers[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+        UINT constantBufferOffsets[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+        UINT constantBufferCounts[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
         uint32_t minConstantBufferSlot = D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT;
         uint32_t maxConstantBufferSlot = 0;
 
@@ -303,7 +308,8 @@ namespace nvrhi::d3d11
         void setGraphicsState(const GraphicsState& state) override;
         void draw(const DrawArguments& args) override;
         void drawIndexed(const DrawArguments& args) override;
-        void drawIndirect(uint32_t offsetBytes) override;
+        void drawIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
+        void drawIndexedIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
 
         void setComputeState(const ComputeState& state) override;
         void dispatch(uint32_t groupsX, uint32_t groupsY = 1, uint32_t groupsZ = 1) override;
@@ -315,6 +321,7 @@ namespace nvrhi::d3d11
         void setRayTracingState(const rt::State& state) override;
         void dispatchRays(const rt::DispatchRaysArguments& args) override;
 
+        void buildOpacityMicromap(rt::IOpacityMicromap* omm, const rt::OpacityMicromapDesc& desc) override;
         void buildBottomLevelAccelStruct(rt::IAccelStruct* as, const rt::GeometryDesc* pGeometries, size_t numGeometries, rt::AccelStructBuildFlags buildFlags) override;
         void compactBottomLevelAccelStructs() override;
         void buildTopLevelAccelStruct(rt::IAccelStruct* as, const rt::InstanceDesc* pInstances, size_t numInstances, rt::AccelStructBuildFlags buildFlags) override;
@@ -472,6 +479,7 @@ namespace nvrhi::d3d11
         void resizeDescriptorTable(IDescriptorTable* descriptorTable, uint32_t newSize, bool keepContents = true) override;
         bool writeDescriptorTable(IDescriptorTable* descriptorTable, const BindingSetItem& item) override;
 
+        rt::OpacityMicromapHandle createOpacityMicromap(const rt::OpacityMicromapDesc& desc) override;
         rt::AccelStructHandle createAccelStruct(const rt::AccelStructDesc& desc) override;
         MemoryRequirements getAccelStructMemoryRequirements(rt::IAccelStruct* as) override;
         bool bindAccelStructMemory(rt::IAccelStruct* as, IHeap* heap, uint64_t offset) override;
