@@ -28,6 +28,8 @@ namespace nvrhi::vulkan
     
     void CommandList::setResourceStatesForBindingSet(IBindingSet* _bindingSet)
     {
+        if (_bindingSet == nullptr)
+            return;
         if (_bindingSet->getDesc() == nullptr)
             return; // is bindless
 
@@ -368,14 +370,20 @@ namespace nvrhi::vulkan
     {
         Texture* texture = checked_cast<Texture*>(_texture);
 
-        m_StateTracker.endTrackingTextureState(texture, subresources, stateBits, false);
+        m_StateTracker.requireTextureState(texture, subresources, stateBits);
+
+        if (m_CurrentCmdBuf)
+            m_CurrentCmdBuf->referencedResources.push_back(texture);
     }
 
     void CommandList::setBufferState(IBuffer* _buffer, ResourceStates stateBits)
     {
         Buffer* buffer = checked_cast<Buffer*>(_buffer);
 
-        m_StateTracker.endTrackingBufferState(buffer, stateBits, false);
+        m_StateTracker.requireBufferState(buffer, stateBits);
+        
+        if (m_CurrentCmdBuf)
+            m_CurrentCmdBuf->referencedResources.push_back(buffer);
     }
     
     void CommandList::setAccelStructState(rt::IAccelStruct* _as, ResourceStates stateBits)
@@ -385,7 +393,10 @@ namespace nvrhi::vulkan
         if (as->dataBuffer)
         {
             Buffer* buffer = checked_cast<Buffer*>(as->dataBuffer.Get());
-            m_StateTracker.endTrackingBufferState(buffer, stateBits, false);
+            m_StateTracker.requireBufferState(buffer, stateBits);
+
+            if (m_CurrentCmdBuf)
+                m_CurrentCmdBuf->referencedResources.push_back(as);
         }
     }
 
@@ -393,14 +404,20 @@ namespace nvrhi::vulkan
     {
         Texture* texture = checked_cast<Texture*>(_texture);
 
-        m_StateTracker.endTrackingTextureState(texture, AllSubresources, stateBits, true);
+        m_StateTracker.setPermanentTextureState(texture, AllSubresources, stateBits);
+
+        if (m_CurrentCmdBuf)
+            m_CurrentCmdBuf->referencedResources.push_back(texture);
     }
 
     void CommandList::setPermanentBufferState(IBuffer* _buffer, ResourceStates stateBits)
     {
         Buffer* buffer = checked_cast<Buffer*>(_buffer);
 
-        m_StateTracker.endTrackingBufferState(buffer, stateBits, true);
+        m_StateTracker.setPermanentBufferState(buffer, stateBits);
+        
+        if (m_CurrentCmdBuf)
+            m_CurrentCmdBuf->referencedResources.push_back(buffer);
     }
 
     ResourceStates CommandList::getTextureSubresourceState(ITexture* _texture, ArraySlice arraySlice, MipLevel mipLevel)

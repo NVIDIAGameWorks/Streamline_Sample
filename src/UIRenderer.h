@@ -191,6 +191,32 @@ protected:
         ImGui::Checkbox("Developer Menu", &m_dev_view);
 
         if (!m_dev_view) {
+            //
+            //  Reflex & Reflex Frame Warp
+            //
+            ImGui::Separator();
+            
+            ImGui::Text("Nvidia Reflex Low Latency");
+            ImGui::SameLine();
+            if (!m_ui.REFLEX_Supported) pushDisabled();
+
+            if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff)
+            {
+                auto i = (int)m_ui.REFLEX_Mode - 1;
+                i = i < 0 ? 0 : i;
+                ImGui::Combo("##Reflex", &i, "On\0On + Boost\0");
+                m_ui.REFLEX_Mode = i + 1;
+            }
+            else
+            {
+                ImGui::Combo("##Reflex", (int*)&m_ui.REFLEX_Mode, "Off\0On\0On + Boost\0");
+            }
+
+            ImGui::Text("Frame Warp");
+            ImGui::SameLine();
+            if (!m_ui.Latewarp_Supported || !m_ui.REFLEX_Supported) pushDisabled();
+            ImGui::Combo("##Latewarp", &m_ui.Latewarp_active, "Off\0On\0");
+            if (!m_ui.Latewarp_Supported || !m_ui.REFLEX_Supported) popDisabled();
 
             //
             //  Generic DLSS
@@ -228,9 +254,16 @@ protected:
                     m_ui.DLSSG_cleanup_needed = true;
                 }
             }
+            if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff)
+            {
+                ImGui::Indent();
+                ImGui::Text("Generated Frames");
+                ImGui::SameLine();
+                ImGui::SliderInt("##MultiframeCount", &m_ui.DLSSG_numFrames, 2, m_ui.DLSSG_numFramesMaxMultiplier, "%dx", ImGuiSliderFlags_AlwaysClamp);
+                ImGui::Unindent();
+            }
             if (!m_ui.DLSSG_Supported || !m_ui.REFLEX_Supported) popDisabled();
             if (m_ui.DLSSG_status != "") ImGui::Text((std::string("State: ") + m_ui.DLSSG_status).c_str());
-
 
             //
             //  DLSS SuperRes
@@ -286,10 +319,10 @@ protected:
             }
 
             //
-            //  NIS Sharpenning
+            //  NIS Sharpening
             //
 
-            ImGui::Text("NIS Sharpenning");
+            ImGui::Text("NIS Sharpening");
             ImGui::SameLine();
             if (! m_ui.NIS_Supported) pushDisabled();
             int nis_mode = m_ui.NIS_Mode == sl::NISMode::eScaler ? 1 : 0;
@@ -301,23 +334,6 @@ protected:
             }
             if (! m_ui.NIS_Supported) popDisabled();
 
-            //
-            //  Reflex
-            //
-
-            ImGui::Text("Nvidia Reflex Low Latency");
-            ImGui::SameLine();
-            if (!m_ui.REFLEX_Supported) pushDisabled();
-
-            if (m_ui.DLSSG_mode != sl::DLSSGMode::eOff) {
-                auto i = (int)m_ui.REFLEX_Mode - 1;
-                i = i < 0 ? 0 : i;
-                ImGui::Combo("##Reflex", &i, "On\0On + Boost\0");
-                m_ui.REFLEX_Mode = i + 1;
-            }
-            else
-
-            ImGui::Combo("##Reflex", (int*)&m_ui.REFLEX_Mode, "Off\0On\0On + Boost\0");
             
             if (ImGui::IsItemHovered()) m_ui.MouseOverUI = true;
 
@@ -436,31 +452,42 @@ protected:
                     "DLAA##Presets"
                     });
 
-                auto DLSSPresetNames = std::vector<std::string>({
-                    "Default##Presets",
-                    "Preset A##Presets",
-                    "Preset B##Presets",
-                    "Preset C##Presets",
-                    "Preset D##Presets",
-                    "Preset E##Presets",
-                    "Preset F##Presets",
-                    });
+                const std::map<sl::DLSSPreset,std::string> DLSSPresetToDropdownMap = {
+                    {sl::DLSSPreset::eDefault, "Default##Presets"},
+                    {sl::DLSSPreset::ePresetA, "Preset A##Presets"},
+                    {sl::DLSSPreset::ePresetB, "Preset B##Presets"},
+                    {sl::DLSSPreset::ePresetC, "Preset C##Presets"},
+                    {sl::DLSSPreset::ePresetD, "Preset D##Presets"},
+                    {sl::DLSSPreset::ePresetE, "Preset E##Presets"},
+                    {sl::DLSSPreset::ePresetF, "Preset F##Presets"},
+                    {sl::DLSSPreset::ePresetJ, "Preset J##Presets"},
+                };
 
                 if (ImGui::CollapsingHeader("Presets")) {
                     ImGui::Indent();
-                    // skip index 0, i.e. OFF
-                    for (int j = 0; j < static_cast<int>(sl::DLSSMode::eCount); j++)
-                    {
+
+                    for (int j = 0; j < static_cast<int>(sl::DLSSMode::eCount); j++) {
 
                         if ((j == static_cast<int>(sl::DLSSMode::eUltraQuality)) || (j == static_cast<int>(sl::DLSSMode::eOff))) continue;
 
-                        if (ImGui::BeginCombo(PresetSlotNames[j].c_str(), DLSSPresetNames[static_cast<int>(m_ui.DLSS_presets[j])].data()))
-                        {
-                            for (int i = 0; i < DLSSPresetNames.size(); ++i) {
+                        const std::string* currentPresetString = nullptr;
 
-                                bool is_selected = i == static_cast<int>(m_ui.DLSS_presets[j]);
+                        auto currentPreset = DLSSPresetToDropdownMap.find(m_ui.DLSS_presets[j]);
 
-                                if (ImGui::Selectable(DLSSPresetNames[i].data(), is_selected)) m_ui.DLSS_presets[j] = (sl::DLSSPreset)i;
+                        if (currentPreset != DLSSPresetToDropdownMap.end()) {
+                            currentPresetString = &DLSSPresetToDropdownMap.at(m_ui.DLSS_presets[j]);
+                        }
+                        else {
+                            currentPresetString = &DLSSPresetToDropdownMap.at(sl::DLSSPreset::eDefault);
+                            donut::log::info("Warning: There is a mismatch in the preset supported by the sample and the preset selected by the snippet");
+                        }
+
+                        if (ImGui::BeginCombo(PresetSlotNames[j].c_str(), currentPresetString->data())) {
+                            for (const auto& [presetEnum, presetName] : DLSSPresetToDropdownMap) {
+
+                                bool is_selected = (presetEnum == m_ui.DLSS_presets[j]);
+
+                                if (ImGui::Selectable(presetName.data(), is_selected)) m_ui.DLSS_presets[j] = presetEnum;
                                 if (is_selected) ImGui::SetItemDefaultFocus();
                             }
                             ImGui::EndCombo();
@@ -538,6 +565,12 @@ protected:
                 }
             }
 
+            ImGui::Text("Frame Warp");
+            ImGui::SameLine();
+            if (!m_ui.Latewarp_Supported || !m_ui.REFLEX_Supported) pushDisabled();
+            ImGui::Combo("##Latewarp", &m_ui.Latewarp_active, "Off\0On\0");
+            if (!m_ui.Latewarp_Supported || !m_ui.REFLEX_Supported) popDisabled();
+
             //
             // DLSS Frame Generatioon
             //
@@ -550,7 +583,7 @@ protected:
             ImGui::Text("DLSS-G Supported: %s", m_ui.DLSSG_Supported ? "yes" : "no");
             if (m_ui.DLSSG_Supported) {
 
-                if (m_ui.REFLEX_Mode == sl::ReflexMode::eOff) {
+                if (m_ui.REFLEX_Mode == (int)sl::ReflexMode::eOff) {
                     ImGui::Text("Reflex needs to be enabled for DLSSG to be enabled");
                     m_ui.DLSSG_mode = sl::DLSSGMode::eOff;
                 }
@@ -569,12 +602,12 @@ protected:
 
 
             //
-            //  NIS Sharpenning
+            //  NIS Sharpening
             //
 
             ImGui::Separator();
             ImGui::PushStyleColor(ImGuiCol_Text, TITLE_COL);
-            ImGui::Text("NIS Sharpenning");
+            ImGui::Text("NIS Sharpening");
             ImGui::PopStyleColor();
 
             ImGui::Text("NIS Supported: %s", m_ui.NIS_Supported ? "yes" : "no");
@@ -715,8 +748,8 @@ protected:
 
                     uint32_t nViewports = (uint32_t)m_ui.BackBufferExtents.size();
                     nViewports = std::max(1u, nViewports); // can't have 0 viewports
-                    std::vector<const char*> nViewports_strings = { "1", "2" };
-                    if (ImGui::BeginCombo("NViewports", nViewports_strings[nViewports - 1]))
+                    std::vector<const char*> nViewports_strings = { "1", "2", "3" };
+                    if (ImGui::BeginCombo("nViewports", nViewports_strings[nViewports - 1]))
                     {
                         for (auto i = 0; i < nViewports_strings.size(); ++i)
                         {
@@ -727,17 +760,13 @@ protected:
                         ImGui::EndCombo();
                     }
                     // check if we need to add/remove viewports based on the new selection
-                    if (nViewports == 2)
+                    if (nViewports == 3)
+                    {
+                        m_ui.BackBufferExtents.resize(3);
+                    }
+                    else if (nViewports == 2)
                     {
                         m_ui.BackBufferExtents.resize(2);
-                        m_ui.BackBufferExtents[0].left = 0;
-                        m_ui.BackBufferExtents[0].top = 0;
-                        m_ui.BackBufferExtents[0].width = width / 2;
-                        m_ui.BackBufferExtents[0].height = height / 2;
-                        m_ui.BackBufferExtents[1].left = width / 2;
-                        m_ui.BackBufferExtents[1].top = height / 2;
-                        m_ui.BackBufferExtents[1].width = width / 2;
-                        m_ui.BackBufferExtents[1].height = height / 2;
                     }
                     else
                     {

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+* Copyright (c) 2014-2024, NVIDIA CORPORATION. All rights reserved.
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -38,7 +38,8 @@ namespace donut::engine
         NormalTexture,
         EmissiveTexture,
         OcclusionTexture,
-        TransmissionTexture
+        TransmissionTexture,
+        OpacityTexture
     };
 
     struct MaterialResourceBinding
@@ -53,7 +54,6 @@ namespace donut::engine
         nvrhi::DeviceHandle m_Device;
         nvrhi::BindingLayoutHandle m_BindingLayout;
         std::unordered_map<const Material*, nvrhi::BindingSetHandle> m_BindingSets;
-        nvrhi::ShaderType m_ShaderType;
         std::vector<MaterialResourceBinding> m_BindingDesc;
         nvrhi::TextureHandle m_FallbackTexture;
         nvrhi::SamplerHandle m_Sampler;
@@ -68,6 +68,7 @@ namespace donut::engine
             nvrhi::IDevice* device, 
             nvrhi::ShaderType shaderType, 
             uint32_t registerSpace,
+            bool registerSpaceIsDescriptorSet,
             const std::vector<MaterialResourceBinding>& bindings,
             nvrhi::ISampler* sampler,
             nvrhi::ITexture* fallbackTexture,

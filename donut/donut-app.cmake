@@ -37,24 +37,31 @@ target_link_libraries(donut_app donut_core donut_engine glfw imgui)
 
 if(DONUT_WITH_DX11)
 target_sources(donut_app PRIVATE src/app/dx11/DeviceManager_DX11.cpp)
-target_compile_definitions(donut_app PUBLIC USE_DX11=1)
 target_link_libraries(donut_app nvrhi_d3d11 d3d12 dxgi)
 endif()
 
 if(DONUT_WITH_DX12)
 target_sources(donut_app PRIVATE src/app/dx12/DeviceManager_DX12.cpp)
-target_compile_definitions(donut_app PUBLIC USE_DX12=1)
 target_link_libraries(donut_app nvrhi_d3d12 d3d11 dxgi)
 endif()
 
 if(DONUT_WITH_VULKAN)
 target_sources(donut_app PRIVATE src/app/vulkan/DeviceManager_VK.cpp)
-target_compile_definitions(donut_app PUBLIC USE_VK=1)
-target_link_libraries(donut_app nvrhi_vk)
+target_link_libraries(donut_app nvrhi_vk Vulkan-Headers)
 endif()
+
+if(DONUT_WITH_AFTERMATH)
+target_sources(donut_app PRIVATE src/app/aftermath/AftermathCrashDump.cpp)
+endif()
+
+target_compile_definitions(donut_app PUBLIC DONUT_WITH_AFTERMATH=$<BOOL:${DONUT_WITH_AFTERMATH}>)
 
 target_link_libraries(donut_app nvrhi) # needs to come after nvrhi_d3d11 etc. for link order
 
 add_dependencies(donut_app donut_shaders)
 
 set_target_properties(donut_app PROPERTIES FOLDER Donut)
+
+if (DONUT_WITH_STATIC_SHADERS)
+target_include_directories(donut_app PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/shaders")
+endif()

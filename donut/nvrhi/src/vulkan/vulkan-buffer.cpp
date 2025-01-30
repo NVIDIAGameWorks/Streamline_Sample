@@ -109,7 +109,7 @@ namespace nvrhi::vulkan
             // vulkan allows for <= 64kb buffer updates to be done inline via vkCmdUpdateBuffer,
             // but the data size must always be a multiple of 4
             // enlarge the buffer slightly to allow for this
-            size += size % 4;
+            size = (size + 3) & ~3ull;
         }
 
         auto bufferInfo = vk::BufferCreateInfo()
@@ -129,14 +129,14 @@ namespace nvrhi::vulkan
         vk::Result res = m_Context.device.createBuffer(&bufferInfo, m_Context.allocationCallbacks, &buffer->buffer);
         CHECK_VK_FAIL(res);
 
-        m_Context.nameVKObject(VkBuffer(buffer->buffer), vk::DebugReportObjectTypeEXT::eBuffer, desc.debugName.c_str());
+        m_Context.nameVKObject(VkBuffer(buffer->buffer), vk::ObjectType::eBuffer, vk::DebugReportObjectTypeEXT::eBuffer, desc.debugName.c_str());
 
         if (!desc.isVirtual)
         {
             res = m_Allocator.allocateBufferMemory(buffer, (usageFlags & vk::BufferUsageFlagBits::eShaderDeviceAddress) != vk::BufferUsageFlags(0));
             CHECK_VK_FAIL(res)
 
-            m_Context.nameVKObject(buffer->memory, vk::DebugReportObjectTypeEXT::eDeviceMemory, desc.debugName.c_str());
+            m_Context.nameVKObject(buffer->memory, vk::ObjectType::eDeviceMemory, vk::DebugReportObjectTypeEXT::eDeviceMemory, desc.debugName.c_str());
 
             if (desc.isVolatile)
             {
@@ -419,9 +419,12 @@ namespace nvrhi::vulkan
             return;
         }
 
-        const size_t commandBufferWriteLimit = 65536;
+        const size_t vkCmdUpdateBufferLimit = 65536;
 
-        if (dataSize <= commandBufferWriteLimit)
+        // Per Vulkan spec, vkCmdUpdateBuffer requires that the data size is smaller than or equal to 64 kB,
+        // and that the offset and data size are a multiple of 4. We can't change the offset, but data size
+        // is rounded up later.
+        if (dataSize <= vkCmdUpdateBufferLimit && (destOffsetBytes & 3) == 0)
         {
             if (m_EnableAutomaticBarriers)
             {
@@ -429,18 +432,10 @@ namespace nvrhi::vulkan
             }
             commitBarriers();
 
-            int64_t remaining = dataSize;
-            const char* base = (const char*)data;
-            while (remaining > 0)
-            {
-                // vulkan allows <= 64kb transfers via VkCmdUpdateBuffer
-                int64_t thisGulpSize = std::min(remaining, int64_t(commandBufferWriteLimit));
+            // Round up the write size to a multiple of 4
+            const size_t sizeToWrite = (dataSize + 3) & ~3ull;
 
-                // we bloat the read size here past the incoming buffer since the transfer must be a multiple of 4; the extra garbage should never be used anywhere
-                thisGulpSize += thisGulpSize % 4;
-                m_CurrentCmdBuf->cmdBuf.updateBuffer(buffer->buffer, destOffsetBytes + dataSize - remaining, thisGulpSize, &base[dataSize - remaining]);
-                remaining -= thisGulpSize;
-            }
+            m_CurrentCmdBuf->cmdBuf.updateBuffer(buffer->buffer, destOffsetBytes, sizeToWrite, data);
         }
         else
         {

@@ -51,8 +51,12 @@ option(STREAMLINE_FEATURE_IMGUI     "Include Imgui dll"             ON)
 option(STREAMLINE_FEATURE_NVPERF    "Include NSight Perf SDK dll"   ON)
 option(STREAMLINE_FEATURE_REFLEX    "Include Reflex dll"            ON)
 option(STREAMLINE_FEATURE_NIS       "Include NIS dll"               ON)
-option(STREAMLINE_FEATURE_DLSS_FG   "Include DLSS-FG dll"           ON)
 option(STREAMLINE_FEATURE_DEEPDVC   "Include DEEPDVC dll"           ON)
+
+# DLSS-FG will take precedence over Latewarp if both are enabled at the same time
+# Be sure to clean the output dir when toggling flags, as sl.dlss_g.dll will override sl.latewarp.dll
+option(STREAMLINE_FEATURE_DLSS_FG   "Include DLSS-FG dll"           ON)
+option(STREAMLINE_FEATURE_LATEWARP  "Include Latewarp dll"          OFF)
 
 if(STREAMLINE_FEATURE_DLSS_SR)
     add_compile_definitions(STREAMLINE_FEATURE_DLSS_SR)
@@ -74,6 +78,9 @@ if (STREAMLINE_FEATURE_DLSS_FG)
 endif()
 if(STREAMLINE_FEATURE_DEEPDVC)
     add_compile_definitions(STREAMLINE_FEATURE_DEEPDVC)
+endif()
+if(STREAMLINE_FEATURE_LATEWARP)
+    add_compile_definitions(STREAMLINE_FEATURE_LATEWARP)
 endif()
 
 set(STREAMLINE_INSTALL_DIR  "${PACKAGE_DIRECTORY}/_bin" CACHE STRING "Streamline Install Dir")
@@ -180,3 +187,6 @@ install(FILES "${CMAKE_SOURCE_DIR}/media/fonts/DroidSans/DroidSans-Mono.ttf" DES
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/media/glTF-Sample-Models/2.0/Sponza" DESTINATION "${PACKAGE_DIRECTORY}/media/glTF-Sample-Models/2.0")
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/media/glTF-Sample-Models/2.0/BrainStem" DESTINATION "${PACKAGE_DIRECTORY}/media/glTF-Sample-Models/2.0")
 install(FILES "${CMAKE_SOURCE_DIR}/run.bat" DESTINATION "${PACKAGE_DIRECTORY}")
+install(FILES "${CMAKE_SOURCE_DIR}/README.md" DESTINATION "${PACKAGE_DIRECTORY}")
+install(FILES "${CMAKE_SOURCE_DIR}/NVIDIA RTX SDKs License (12Apr2021).txt" DESTINATION "${PACKAGE_DIRECTORY}")
+install(FILES "${CMAKE_SOURCE_DIR}/release.txt" DESTINATION "${PACKAGE_DIRECTORY}")

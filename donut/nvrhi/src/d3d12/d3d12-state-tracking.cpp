@@ -81,6 +81,13 @@ namespace nvrhi::d3d12
 
         m_StateTracker.requireTextureState(texture, subresources, state);
     }
+
+    void CommandList::requireSamplerFeedbackTextureState(ISamplerFeedbackTexture* _texture, ResourceStates state)
+    {
+        SamplerFeedbackTexture* texture = checked_cast<SamplerFeedbackTexture*>(_texture);
+
+        m_StateTracker.requireTextureState(texture, AllSubresources, state);
+    }
     
     void CommandList::requireBufferState(IBuffer* _buffer, ResourceStates state)
     {
@@ -106,7 +113,18 @@ namespace nvrhi::d3d12
         // Convert the texture barriers into D3D equivalents
         for (const auto& barrier : textureBarriers)
         {
-            const Texture* texture = static_cast<const Texture*>(barrier.texture);
+            const Texture* texture = nullptr;
+            ID3D12Resource* resource = nullptr;
+
+            if (barrier.texture->isSamplerFeedback)
+            {
+                resource = static_cast<const SamplerFeedbackTexture*>(barrier.texture)->resource;
+            }
+            else
+            {
+                texture = static_cast<const Texture*>(barrier.texture);
+                resource = texture->resource;
+            }
 
             D3D12_RESOURCE_BARRIER d3dbarrier{};
             const D3D12_RESOURCE_STATES stateBefore = convertResourceStates(barrier.stateBefore);
@@ -116,7 +134,7 @@ namespace nvrhi::d3d12
                 d3dbarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                 d3dbarrier.Transition.StateBefore = stateBefore;
                 d3dbarrier.Transition.StateAfter = stateAfter;
-                d3dbarrier.Transition.pResource = texture->resource;
+                d3dbarrier.Transition.pResource = resource;
                 if (barrier.entireTexture)
                 {
                     d3dbarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -134,7 +152,7 @@ namespace nvrhi::d3d12
             else if (stateAfter & D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
             {
                 d3dbarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-                d3dbarrier.UAV.pResource = texture->resource;
+                d3dbarrier.UAV.pResource = resource;
                 m_D3DBarriers.push_back(d3dbarrier);
             }
         }
@@ -229,14 +247,20 @@ namespace nvrhi::d3d12
     {
         Texture* texture = checked_cast<Texture*>(_texture);
 
-        m_StateTracker.endTrackingTextureState(texture, subresources, stateBits, false);
+        m_StateTracker.requireTextureState(texture, subresources, stateBits);
+
+        if (m_Instance)
+            m_Instance->referencedResources.push_back(texture);
     }
 
     void CommandList::setBufferState(IBuffer* _buffer, ResourceStates stateBits)
     {
         Buffer* buffer = checked_cast<Buffer*>(_buffer);
 
-        m_StateTracker.endTrackingBufferState(buffer, stateBits, false);
+        m_StateTracker.requireBufferState(buffer, stateBits);
+
+        if (m_Instance)
+            m_Instance->referencedResources.push_back(buffer);
     }
 
     void CommandList::setAccelStructState(rt::IAccelStruct* _as, ResourceStates stateBits)
@@ -244,22 +268,32 @@ namespace nvrhi::d3d12
         AccelStruct* as = checked_cast<AccelStruct*>(_as);
 
         if (as->dataBuffer)
-            m_StateTracker.endTrackingBufferState(as->dataBuffer, stateBits, false);
+        {
+            m_StateTracker.requireBufferState(as->dataBuffer, stateBits);
+            
+            if (m_Instance)
+                m_Instance->referencedResources.push_back(as);
+        }
     }
 
     void CommandList::setPermanentTextureState(ITexture* _texture, ResourceStates stateBits)
     {
         Texture* texture = checked_cast<Texture*>(_texture);
 
-        m_StateTracker.endTrackingTextureState(texture, AllSubresources, stateBits, true);
+        m_StateTracker.setPermanentTextureState(texture, AllSubresources, stateBits);
 
+        if (m_Instance)
+            m_Instance->referencedResources.push_back(texture);
     }
 
     void CommandList::setPermanentBufferState(IBuffer* _buffer, ResourceStates stateBits)
     {
         Buffer* buffer = checked_cast<Buffer*>(_buffer);
 
-        m_StateTracker.endTrackingBufferState(buffer, stateBits, true);
+        m_StateTracker.setPermanentBufferState(buffer, stateBits);
+        
+        if (m_Instance)
+            m_Instance->referencedResources.push_back(buffer);
     }
 
     ResourceStates CommandList::getTextureSubresourceState(ITexture* _texture, ArraySlice arraySlice, MipLevel mipLevel)

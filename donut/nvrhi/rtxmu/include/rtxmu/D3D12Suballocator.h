@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -24,13 +24,17 @@
 
 #include "Suballocator.h"
 #include <d3d12.h>
+#include <assert.h>
+#include <string>
 
 #pragma comment(lib, "D3D12.lib")
 
 namespace rtxmu
 {
-    // If suballocator blocks are larger than 4 MB then use placed resources for large page sizes
-    constexpr bool Use4MBAlignedPlacedResources = true;
+    struct Allocator
+    {
+        ID3D12Device5* device;
+    };
 
     class D3D12Block
     {
@@ -39,22 +43,25 @@ namespace rtxmu
         static D3D12_GPU_VIRTUAL_ADDRESS getGPUVA(D3D12Block block,
                                                   uint64_t   offset);
 
-        void allocate(ID3D12Device5*        device,
-                      uint64_t              size,
+        void allocate(uint64_t              size,
                       D3D12_HEAP_TYPE       heapType,
                       D3D12_RESOURCE_STATES state,
                       uint32_t              alignment);
 
-        void free(ID3D12Device5* device);
+        void free();
 
         uint64_t getVMA();
 
         ID3D12Resource* getResource();
 
+        static void setAllocator(Allocator* allocator);
+
+    protected:
+        static Allocator* m_allocator;
+
     private:
 
         ID3D12Resource* m_resource = nullptr;
-
     };
 
     class D3D12ScratchBlock : public D3D12Block
@@ -66,9 +73,29 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(uint64_t size, std::string name)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(size, heapType, state, alignment);
+
+            name = std::string("RTXMU Scratch Suballocator Block #").append(name);
+            std::wstring wideString(name.begin(), name.end());
+            getResource()->SetName(wideString.c_str());
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Scratch Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
+        }
+
+        void free()
+        {
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Scratch Suballocator Block Release\n");
+            }
+            D3D12Block::free();
         }
     };
 
@@ -81,9 +108,64 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(uint64_t size, std::string name)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(size, heapType, state, alignment);
+
+            name = std::string("RTXMU Result BLAS Suballocator Block #").append(name);
+            std::wstring wideString(name.begin(), name.end());
+            getResource()->SetName(wideString.c_str());
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Result BLAS Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
+        }
+
+        void free()
+        {
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Result BLAS Suballocator Block Release\n");
+            }
+            D3D12Block::free();
+        }
+    };
+
+    class D3D12CompactedAccelStructBlock : public D3D12Block
+    {
+    public:
+        static constexpr D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+        static constexpr D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT;
+        static constexpr uint32_t alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+
+        uint32_t getAlignment() { return alignment; }
+
+        void allocate(uint64_t size, std::string name)
+        {
+            D3D12Block::allocate(size, heapType, state, alignment);
+
+            name = std::string("RTXMU Compacted BLAS Suballocator Block #").append(name);
+            std::wstring wideString(name.begin(), name.end());
+            getResource()->SetName(wideString.c_str());
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Compacted BLAS Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
+        }
+
+        void free()
+        {
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Compacted BLAS Suballocator Block Release\n");
+            }
+            D3D12Block::free();
         }
     };
 
@@ -96,9 +178,29 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(uint64_t size, std::string name)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(size, heapType, state, alignment);
+
+            name = std::string("RTXMU Readback CPU Suballocator Block #").append(name);
+            std::wstring wideString(name.begin(), name.end());
+            getResource()->SetName(wideString.c_str());
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Readback CPU Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
+        }
+
+        void free()
+        {
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Readback CPU Suballocator Block Release\n");
+            }
+            D3D12Block::free();
         }
     };
 
@@ -111,9 +213,29 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(uint64_t size, std::string name)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(size, heapType, state, alignment);
+
+            name = std::string("RTXMU Compaction Size GPU Suballocator Block #").append(name);
+            std::wstring wideString(name.begin(), name.end());
+            getResource()->SetName(wideString.c_str());
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Compaction Size GPU Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
+        }
+
+        void free()
+        {
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Compaction Size GPU Suballocator Block Release\n");
+            }
+            D3D12Block::free();
         }
     };
 
@@ -126,9 +248,29 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(uint64_t size, std::string name)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(size, heapType, state, alignment);
+
+            name = std::string("RTXMU Upload to CPU Suballocator Block #").append(name);
+            std::wstring wideString(name.begin(), name.end());
+            getResource()->SetName(wideString.c_str());
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Upload CPU Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
+        }
+
+        void free()
+        {
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Upload to CPU Suballocator Block Release\n");
+            }
+            D3D12Block::free();
         }
     };
 
@@ -141,9 +283,29 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(uint64_t size, std::string name)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(size, heapType, state, alignment);
+
+            name = std::string("RTXMU Upload to GPU Suballocator Block #").append(name);
+            std::wstring wideString(name.begin(), name.end());
+            getResource()->SetName(wideString.c_str());
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Upload GPU Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
+        }
+
+        void free()
+        {
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Upload to GPU Suballocator Block Release\n");
+            }
+            D3D12Block::free();
         }
     };
 }

@@ -24,6 +24,18 @@
 #include <donut/engine/ShaderFactory.h>
 #include <donut/engine/CommonRenderPasses.h>
 
+#if DONUT_WITH_STATIC_SHADERS
+#if DONUT_WITH_DX11
+#include "compiled_shaders/passes/mipmapgen_cs.dxbc.h"
+#endif
+#if DONUT_WITH_DX12
+#include "compiled_shaders/passes/mipmapgen_cs.dxil.h"
+#endif
+#if DONUT_WITH_VULKAN
+#include "compiled_shaders/passes/mipmapgen_cs.spirv.h"
+#endif
+#endif
+
 using namespace donut::math;
 #include <donut/shaders/mipmapgen_cb.h>
 
@@ -103,8 +115,8 @@ MipMapGenPass::MipMapGenPass(
     assert(mode>=0 && mode <= MODE_MINMAX);
 
     std::vector<ShaderMacro> macros = { {"MODE", std::to_string(mode)} };
-    m_Shader = shaderFactory->CreateShader(
-        "donut/passes/mipmapgen_cs.hlsl", "main", &macros, nvrhi::ShaderType::Compute);
+    m_Shader = shaderFactory->CreateAutoShader(
+        "donut/passes/mipmapgen_cs.hlsl", "main", DONUT_MAKE_PLATFORM_SHADER(g_mipmapgen_cs), &macros, nvrhi::ShaderType::Compute);
 
     // Constants
     nvrhi::BufferDesc constantBufferDesc;
@@ -166,8 +178,6 @@ void MipMapGenPass::Dispatch(nvrhi::ICommandList* commandList, int maxLOD)
     uint nmipLevels = m_Texture->getDesc().mipLevels;
     if (maxLOD > 0 && maxLOD < (int)nmipLevels)
         nmipLevels = maxLOD+1;
-
-    uint npasses = (uint32_t)ceilf((float)nmipLevels/(float)NUM_LODS);
 
     uint width = m_Texture->getDesc().width,
          height = m_Texture->getDesc().height;

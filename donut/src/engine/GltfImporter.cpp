@@ -355,7 +355,10 @@ bool GltfImporter::Load(
         const cgltf_material& material = objects->materials[mat_idx];
         
         std::shared_ptr<Material> matinfo = m_SceneTypeFactory->CreateMaterial();
-        if (material.name) matinfo->name = material.name;
+        if (material.name)
+            matinfo->name = material.name;
+        matinfo->modelFileName = normalizedFileName;
+        matinfo->materialIndexInModel = int(mat_idx);
 
         bool useTransmission = false;
 
@@ -368,10 +371,6 @@ bool GltfImporter::Load(
             matinfo->specularColor = material.pbr_specular_glossiness.specular_factor;
             matinfo->roughness = 1.f - material.pbr_specular_glossiness.glossiness_factor;
             matinfo->opacity = material.pbr_specular_glossiness.diffuse_factor[3];
-
-            if (material.has_transmission)
-            {
-            }
         }
         else if (material.has_pbr_metallic_roughness)
         {
@@ -382,7 +381,6 @@ bool GltfImporter::Load(
             matinfo->metalness = material.pbr_metallic_roughness.metallic_factor;
             matinfo->roughness = material.pbr_metallic_roughness.roughness_factor;
             matinfo->opacity = material.pbr_metallic_roughness.base_color_factor[3];
-
         }
 
         if (material.has_transmission)
@@ -417,6 +415,7 @@ bool GltfImporter::Load(
         case cgltf_alpha_mode_opaque: matinfo->domain = useTransmission ? MaterialDomain::Transmissive : MaterialDomain::Opaque; break;
         case cgltf_alpha_mode_mask: matinfo->domain = useTransmission ? MaterialDomain::TransmissiveAlphaTested : MaterialDomain::AlphaTested; break;
         case cgltf_alpha_mode_blend: matinfo->domain = useTransmission ? MaterialDomain::TransmissiveAlphaBlended : MaterialDomain::AlphaBlended; break;
+        default: break;
         }
 
         materials[&material] = matinfo;
@@ -483,6 +482,7 @@ bool GltfImporter::Load(
     std::vector<float3> computedTangents;
     std::vector<float3> computedBitangents;
     std::vector<std::shared_ptr<MeshInfo>> meshes;
+    std::shared_ptr<Material> emptyMaterial;
 
     for (size_t mesh_idx = 0; mesh_idx < objects->meshes_count; mesh_idx++)
     {
@@ -524,9 +524,7 @@ bool GltfImporter::Load(
             {
                 const cgltf_attribute& attr = prim.attributes[attr_idx];
 
-                // ReSharper disable once CppIncompleteSwitchStatement
-                // ReSharper disable once CppDefaultCaseNotHandledInSwitchStatement
-                switch(attr.type)  // NOLINT(clang-diagnostic-switch)
+                switch(attr.type)
                 {
                 case cgltf_attribute_type_position:
                     assert(attr.data->type == cgltf_type_vec3);
@@ -558,6 +556,8 @@ bool GltfImporter::Load(
                     assert(attr.data->type == cgltf_type_vec4);
                     assert(attr.data->component_type == cgltf_component_type_r_8u || attr.data->component_type == cgltf_component_type_r_16u || attr.data->component_type == cgltf_component_type_r_32f);
                     joint_weights = attr.data;
+                    break;
+                default:
                     break;
                 }
             }
@@ -795,6 +795,8 @@ bool GltfImporter::Load(
 
             if (joint_indices)
             {
+                minfo->isSkinPrototype = true;
+
                 assert(joint_indices->count == positions->count);
 
                 auto [jointSrc, jointStride] = cgltf_buffer_iterator(joint_indices, 0);
@@ -802,6 +804,8 @@ bool GltfImporter::Load(
 
                 if (joint_indices->component_type == cgltf_component_type_r_8u)
                 {
+                    if (!jointStride) jointStride = sizeof(uint8_t) * 4;
+
                     for (size_t v_idx = 0; v_idx < joint_indices->count; v_idx++)
                     {
                         *jointDst = dm::vector<uint16_t, 4>(jointSrc[0], jointSrc[1], jointSrc[2], jointSrc[3]);
@@ -813,6 +817,9 @@ bool GltfImporter::Load(
                 else
                 {
                     assert(joint_indices->component_type == cgltf_component_type_r_16u);
+
+                    if (!jointStride) jointStride = sizeof(uint16_t) * 4;
+
                     for (size_t v_idx = 0; v_idx < joint_indices->count; v_idx++)
                     {
                         const uint16_t* jointSrcUshort = (const uint16_t*)jointSrc;
@@ -826,6 +833,8 @@ bool GltfImporter::Load(
 
             if (joint_weights)
             {
+                minfo->isSkinPrototype = true;
+
                 assert(joint_weights->count == positions->count);
 
                 auto [weightSrc, weightStride] = cgltf_buffer_iterator(joint_weights, 0);
@@ -833,6 +842,8 @@ bool GltfImporter::Load(
 
                 if (joint_weights->component_type == cgltf_component_type_r_8u)
                 {
+                    if (!weightStride) weightStride = sizeof(uint8_t) * 4;
+
                     for (size_t v_idx = 0; v_idx < joint_indices->count; v_idx++)
                     {
                         *weightDst = dm::float4(
@@ -847,6 +858,8 @@ bool GltfImporter::Load(
                 }
                 else if (joint_weights->component_type == cgltf_component_type_r_16u)
                 {
+                    if (!weightStride) weightStride = sizeof(uint16_t) * 4;
+
                     for (size_t v_idx = 0; v_idx < joint_indices->count; v_idx++)
                     {
                         const uint16_t* weightSrcUshort = (const uint16_t*)weightSrc;
@@ -863,6 +876,9 @@ bool GltfImporter::Load(
                 else
                 {
                     assert(joint_weights->component_type == cgltf_component_type_r_32f);
+
+                    if (!weightStride) weightStride = sizeof(float) * 4;
+
                     for (size_t v_idx = 0; v_idx < joint_indices->count; v_idx++)
                     {
                         *weightDst = (const float*)weightSrc;
@@ -874,7 +890,21 @@ bool GltfImporter::Load(
             }
 
             auto geometry = m_SceneTypeFactory->CreateMeshGeometry();
-            geometry->material = materials[prim.material];
+            if (prim.material)
+            {
+                geometry->material = materials[prim.material];
+            }
+            else
+            {
+                log::warning("Geometry %d for mesh '%s' doesn't have a material.", uint32_t(minfo->geometries.size()), minfo->name.c_str());
+                if (!emptyMaterial)
+                {
+                    emptyMaterial = std::make_shared<Material>();
+                    emptyMaterial->name = "(empty)";
+                }
+                geometry->material = emptyMaterial;
+            }
+
             geometry->indexOffsetInMesh = minfo->totalIndices;
             geometry->vertexOffsetInMesh = minfo->totalVertices;
             geometry->numIndices = (uint32_t)indexCount;
@@ -1109,7 +1139,6 @@ bool GltfImporter::Load(
             // go up the stack until we find a node where some nodes are left
             while (context.srcCount == 0 && !stack.empty())
             {
-                context.dstParent->ReverseChildren();
                 context = stack.back();
                 stack.pop_back();
             }
@@ -1121,13 +1150,14 @@ bool GltfImporter::Load(
         assert(src->skin);
         assert(src->mesh);
 
-        std::shared_ptr<MeshInfo> prorotypeMesh;
+        std::shared_ptr<MeshInfo> prototypeMesh;
         auto found = meshMap.find(src->mesh);
         if (found != meshMap.end())
         {
-            prorotypeMesh = found->second;
+            prototypeMesh = found->second;
+            assert( prototypeMesh->isSkinPrototype );
 
-            auto skinnedInstance = std::make_shared<SkinnedMeshInstance>(m_SceneTypeFactory, prorotypeMesh);
+            auto skinnedInstance = std::make_shared<SkinnedMeshInstance>(m_SceneTypeFactory, prototypeMesh);
             skinnedInstance->joints.resize(src->skin->joints_count);
 
             for (size_t joint_idx = 0; joint_idx < src->skin->joints_count; joint_idx++)
@@ -1170,18 +1200,24 @@ bool GltfImporter::Load(
         for (size_t s_idx = 0; s_idx < srcAnim->samplers_count; s_idx++)
         {
             const cgltf_animation_sampler* srcSampler = &srcAnim->samplers[s_idx];
+            const cgltf_animation_channel* srcChannel = &srcAnim->channels[s_idx];
             auto dstSampler = std::make_shared<animation::Sampler>();
 
             switch (srcSampler->interpolation)
             {
             case cgltf_interpolation_type_linear:
-                dstSampler->SetInterpolationMode(animation::InterpolationMode::Linear);
+                if (srcChannel->target_path == cgltf_animation_path_type_rotation)
+                    dstSampler->SetInterpolationMode(animation::InterpolationMode::Slerp);
+                else
+                    dstSampler->SetInterpolationMode(animation::InterpolationMode::Linear);
                 break;
             case cgltf_interpolation_type_step:
                 dstSampler->SetInterpolationMode(animation::InterpolationMode::Step);
                 break;
             case cgltf_interpolation_type_cubic_spline:
                 dstSampler->SetInterpolationMode(animation::InterpolationMode::HermiteSpline);
+                break;
+            default:
                 break;
             }
 
@@ -1266,8 +1302,6 @@ bool GltfImporter::Load(
                 animationNode->SetName(srcAnim->name);
         }
     }
-
-    animationContainer->ReverseChildren();
 
     if (c_ForceRebuildTangents)
     {

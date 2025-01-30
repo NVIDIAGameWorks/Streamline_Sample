@@ -72,7 +72,6 @@ namespace nvrhi::d3d11
         pso->pDepthStencilState = getDepthStencilState(renderState.depthStencilState);
         pso->requiresBlendFactor = renderState.blendState.usesConstantColor(uint32_t(pso->framebufferInfo.colorFormats.size()));
         
-        pso->stencilRef = renderState.depthStencilState.stencilRefValue;
         pso->shaderMask = ShaderType::None;
 
         if (desc.VS) { pso->pVS = checked_cast<Shader*>(desc.VS.Get())->VS; pso->shaderMask = pso->shaderMask | ShaderType::Vertex; }
@@ -117,8 +116,6 @@ namespace nvrhi::d3d11
         m_Context.immediateContext->DSSetShader(pso->pDS, nullptr, 0);
         m_Context.immediateContext->GSSetShader(pso->pGS, nullptr, 0);
         m_Context.immediateContext->PSSetShader(pso->pPS, nullptr, 0);
-
-        m_Context.immediateContext->OMSetDepthStencilState(pso->pDepthStencilState, pso->stencilRef);
     }
 
     static DX11_ViewportState convertViewportState(const ViewportState& vpState)
@@ -171,7 +168,9 @@ namespace nvrhi::d3d11
             arraysAreDifferent(m_CurrentViewports.scissorRects, state.viewport.scissorRects);
 
         const bool updateBlendState = !m_CurrentGraphicsStateValid || 
-            pipeline->requiresBlendFactor && state.blendConstantColor != m_CurrentBlendConstantColor;
+            (pipeline->requiresBlendFactor && state.blendConstantColor != m_CurrentBlendConstantColor);
+        const bool updateStencilRef = !m_CurrentGraphicsStateValid ||
+            (pipeline->desc.renderState.depthStencilState.dynamicStencilRef && state.dynamicStencilRefValue != m_CurrentStencilRefValue);
             
         const bool updateIndexBuffer = !m_CurrentGraphicsStateValid || m_CurrentIndexBufferBinding != state.indexBuffer;
         const bool updateVertexBuffers = !m_CurrentGraphicsStateValid || arraysAreDifferent(m_CurrentVertexBufferBindings, state.vertexBuffers);
@@ -208,6 +207,14 @@ namespace nvrhi::d3d11
         if (updatePipeline)
         {
             bindGraphicsPipeline(pipeline);
+        }
+
+        if (updatePipeline || updateStencilRef)
+        {
+            m_CurrentStencilRefValue = pipeline->desc.renderState.depthStencilState.dynamicStencilRef
+                ? state.dynamicStencilRefValue
+                : pipeline->desc.renderState.depthStencilState.stencilRefValue;
+            m_Context.immediateContext->OMSetDepthStencilState(pipeline->pDepthStencilState, m_CurrentStencilRefValue);
         }
 
         if (updatePipeline || updateBlendState)
@@ -399,78 +406,6 @@ namespace nvrhi::d3d11
         }
     }
 
-    namespace
-    {
-        //Unfortunately we can't memcmp the structs since they have padding bytes in them
-        inline bool operator!=(const D3D11_RENDER_TARGET_BLEND_DESC& lhsrt, const D3D11_RENDER_TARGET_BLEND_DESC& rhsrt)
-        {
-            if (lhsrt.BlendEnable != rhsrt.BlendEnable ||
-                lhsrt.SrcBlend != rhsrt.SrcBlend ||
-                lhsrt.DestBlend != rhsrt.DestBlend ||
-                lhsrt.BlendOp != rhsrt.BlendOp ||
-                lhsrt.SrcBlendAlpha != rhsrt.SrcBlendAlpha ||
-                lhsrt.DestBlendAlpha != rhsrt.DestBlendAlpha ||
-                lhsrt.BlendOpAlpha != rhsrt.BlendOpAlpha ||
-                lhsrt.RenderTargetWriteMask != rhsrt.RenderTargetWriteMask)
-                return true;
-            return false;
-        }
-
-        inline bool operator!=(const D3D11_BLEND_DESC& lhs, const D3D11_BLEND_DESC& rhs)
-        {
-            if (lhs.AlphaToCoverageEnable != rhs.AlphaToCoverageEnable ||
-                lhs.IndependentBlendEnable != rhs.IndependentBlendEnable)
-                return true;
-            for (size_t i = 0; i < sizeof(lhs.RenderTarget) / sizeof(lhs.RenderTarget[0]); i++)
-            {
-                if (lhs.RenderTarget[i] != rhs.RenderTarget[i])
-                    return true;
-            }
-            return false;
-        }
-
-        inline bool operator!=(const D3D11_RASTERIZER_DESC& lhs, const D3D11_RASTERIZER_DESC& rhs)
-        {
-            if (lhs.FillMode != rhs.FillMode ||
-                lhs.CullMode != rhs.CullMode ||
-                lhs.FrontCounterClockwise != rhs.FrontCounterClockwise ||
-                lhs.DepthBias != rhs.DepthBias ||
-                lhs.DepthBiasClamp != rhs.DepthBiasClamp ||
-                lhs.SlopeScaledDepthBias != rhs.SlopeScaledDepthBias ||
-                lhs.DepthClipEnable != rhs.DepthClipEnable ||
-                lhs.ScissorEnable != rhs.ScissorEnable ||
-                lhs.MultisampleEnable != rhs.MultisampleEnable ||
-                lhs.AntialiasedLineEnable != rhs.AntialiasedLineEnable)
-                return true;
-
-            return false;
-        }
-
-        inline bool operator!=(const D3D11_DEPTH_STENCILOP_DESC& lhs, const D3D11_DEPTH_STENCILOP_DESC& rhs)
-        {
-            if (lhs.StencilFailOp != rhs.StencilFailOp ||
-                lhs.StencilDepthFailOp != rhs.StencilDepthFailOp ||
-                lhs.StencilPassOp != rhs.StencilPassOp ||
-                lhs.StencilFunc != rhs.StencilFunc)
-                return true;
-            return false;
-        }
-        inline bool operator!=(const D3D11_DEPTH_STENCIL_DESC& lhs, const D3D11_DEPTH_STENCIL_DESC& rhs)
-        {
-            if (lhs.DepthEnable != rhs.DepthEnable ||
-                lhs.DepthWriteMask != rhs.DepthWriteMask ||
-                lhs.DepthFunc != rhs.DepthFunc ||
-                lhs.StencilEnable != rhs.StencilEnable ||
-                lhs.StencilReadMask != rhs.StencilReadMask ||
-                lhs.StencilWriteMask != rhs.StencilWriteMask ||
-                lhs.FrontFace != rhs.FrontFace ||
-                lhs.FrontFace != rhs.BackFace)
-                return true;
-
-            return false;
-        }
-    }
-
     ID3D11BlendState* Device::getBlendState(const BlendState& blendState)
     {
         size_t hash = 0;
@@ -535,7 +470,6 @@ namespace nvrhi::d3d11
         hash_combine(hash, depthState.stencilEnable);
         hash_combine(hash, depthState.stencilReadMask);
         hash_combine(hash, depthState.stencilWriteMask);
-        hash_combine(hash, depthState.stencilRefValue);
         hash_combine(hash, depthState.frontFaceStencil.failOp);
         hash_combine(hash, depthState.frontFaceStencil.depthFailOp);
         hash_combine(hash, depthState.frontFaceStencil.passOp);

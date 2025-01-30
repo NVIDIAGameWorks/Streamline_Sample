@@ -52,6 +52,7 @@ freely, subject to the following restrictions:
 #include <locale>
 
 #include <donut/app/DeviceManager.h>
+#include <donut/app/DeviceManager_DX11.h>
 #include <donut/core/log.h>
 
 #include <Windows.h>
@@ -65,125 +66,9 @@ using nvrhi::RefCountPtr;
 
 using namespace donut::app;
 
-class DeviceManager_DX11 : public DeviceManager
-{
-    RefCountPtr<ID3D11Device> m_Device;
-    RefCountPtr<ID3D11DeviceContext> m_ImmediateContext;
-    RefCountPtr<IDXGISwapChain> m_SwapChain;
-    DXGI_SWAP_CHAIN_DESC m_SwapChainDesc{};
-    HWND m_hWnd = nullptr;
-
-    nvrhi::DeviceHandle m_NvrhiDevice;
-    nvrhi::TextureHandle m_RhiBackBuffer;
-    RefCountPtr<ID3D11Texture2D> m_D3D11BackBuffer;
-
-    std::string m_RendererString;
-
-public:
-    [[nodiscard]] const char* GetRendererString() const override
-    {
-        return m_RendererString.c_str();
-    }
-
-    [[nodiscard]] nvrhi::IDevice* GetDevice() const override
-    {
-        return m_NvrhiDevice;
-    }
-
-    void BeginFrame() override;
-
-    void ReportLiveObjects() override;
-
-    [[nodiscard]] nvrhi::GraphicsAPI GetGraphicsAPI() const override
-    {
-        return nvrhi::GraphicsAPI::D3D11;
-    }
-protected:
-    bool CreateDeviceAndSwapChain() override;
-    void DestroyDeviceAndSwapChain() override;
-    void ResizeSwapChain() override;
-
-    nvrhi::ITexture* GetCurrentBackBuffer() override
-    {
-        return m_RhiBackBuffer;
-    }
-
-    nvrhi::ITexture* GetBackBuffer(uint32_t index) override
-    {
-        if (index == 0)
-            return m_RhiBackBuffer;
-
-        return nullptr;
-    }
-
-    uint32_t GetCurrentBackBufferIndex() override
-    {
-        return 0;
-    }
-
-    uint32_t GetBackBufferCount() override
-    {
-        return 1;
-    }
-
-    void Present() override;
-
-
-private:
-    bool CreateRenderTarget();
-    void ReleaseRenderTarget();
-};
-
 static bool IsNvDeviceID(UINT id)
 {
     return id == 0x10DE;
-}
-
-// Find an adapter whose name contains the given string.
-static RefCountPtr<IDXGIAdapter> FindAdapter(const std::wstring& targetName)
-{
-    RefCountPtr<IDXGIAdapter> targetAdapter;
-    RefCountPtr<IDXGIFactory1> DXGIFactory;
-    HRESULT hres = CreateDXGIFactory1(IID_PPV_ARGS(&DXGIFactory));
-    if (hres != S_OK)
-    {
-        donut::log::error("ERROR in CreateDXGIFactory.\n"
-            "For more info, get log from debug D3D runtime: (1) Install DX SDK, and enable Debug D3D from DX Control Panel Utility. (2) Install and start DbgView. (3) Try running the program again.\n");
-        return targetAdapter;
-    }
-
-    unsigned int adapterNo = 0;
-    while (SUCCEEDED(hres))
-    {
-        RefCountPtr<IDXGIAdapter> pAdapter;
-        hres = DXGIFactory->EnumAdapters(adapterNo, &pAdapter);
-
-        if (SUCCEEDED(hres))
-        {
-            DXGI_ADAPTER_DESC aDesc;
-            pAdapter->GetDesc(&aDesc);
-
-            // If no name is specified, return the first adapater.  This is the same behaviour as the
-            // default specified for D3D11CreateDevice when no adapter is specified.
-            if (targetName.length() == 0)
-            {
-                targetAdapter = pAdapter;
-                break;
-            }
-
-            std::wstring aName = aDesc.Description;
-
-            if (aName.find(targetName) != std::string::npos)
-            {
-                targetAdapter = pAdapter;
-                break;
-            }
-        }
-
-        adapterNo++;
-    }
-
-    return targetAdapter;
 }
 
 // Adjust window rect so that it is centred on the given adapter.  Clamps to fit if it's too big.
@@ -195,7 +80,7 @@ static bool MoveWindowOntoAdapter(IDXGIAdapter* targetAdapter, RECT& rect)
     unsigned int outputNo = 0;
     while (SUCCEEDED(hres))
     {
-        IDXGIOutput* pOutput = nullptr;
+        nvrhi::RefCountPtr<IDXGIOutput> pOutput;
         hres = targetAdapter->EnumOutputs(outputNo++, &pOutput);
 
         if (SUCCEEDED(hres) && pOutput)
@@ -224,7 +109,7 @@ static bool MoveWindowOntoAdapter(IDXGIAdapter* targetAdapter, RECT& rect)
     return false;
 }
 
-void DeviceManager_DX11::BeginFrame()
+bool DeviceManager_DX11::BeginFrame()
 {
     DXGI_SWAP_CHAIN_DESC newSwapChainDesc;
     if (SUCCEEDED(m_SwapChain->GetDesc(&newSwapChainDesc)))
@@ -243,8 +128,8 @@ void DeviceManager_DX11::BeginFrame()
             ResizeSwapChain();
             BackBufferResized();
         }
-
     }
+    return true;
 }
 
 void DeviceManager_DX11::ReportLiveObjects()
@@ -256,7 +141,121 @@ void DeviceManager_DX11::ReportLiveObjects()
         pDebug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_DETAIL);
 }
 
-bool DeviceManager_DX11::CreateDeviceAndSwapChain()
+bool DeviceManager_DX11::CreateInstanceInternal()
+{
+    if (!m_DxgiFactory)
+    {
+        HRESULT hres = CreateDXGIFactory1(IID_PPV_ARGS(&m_DxgiFactory));
+        if (hres != S_OK)
+        {
+            donut::log::error("ERROR in CreateDXGIFactory1.\n"
+                "For more info, get log from debug D3D runtime: (1) Install DX SDK, and enable Debug D3D from DX Control Panel Utility. (2) Install and start DbgView. (3) Try running the program again.\n");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool DeviceManager_DX11::EnumerateAdapters(std::vector<AdapterInfo>& outAdapters)
+{
+    if (!m_DxgiFactory)
+        return false;
+
+    outAdapters.clear();
+    
+    while (true)
+    {
+        RefCountPtr<IDXGIAdapter> adapter;
+        HRESULT hr = m_DxgiFactory->EnumAdapters(uint32_t(outAdapters.size()), &adapter);
+        if (FAILED(hr))
+            return true;
+
+        DXGI_ADAPTER_DESC desc;
+        hr = adapter->GetDesc(&desc);
+        if (FAILED(hr))
+            return false;
+
+        AdapterInfo adapterInfo;
+        
+        adapterInfo.name = GetAdapterName(desc);
+        adapterInfo.dxgiAdapter = adapter;
+        adapterInfo.vendorID = desc.VendorId;
+        adapterInfo.deviceID = desc.DeviceId;
+        adapterInfo.dedicatedVideoMemory = desc.DedicatedVideoMemory;
+
+        AdapterInfo::LUID luid;
+        static_assert(luid.size() == sizeof(desc.AdapterLuid));
+        memcpy(luid.data(), &desc.AdapterLuid, luid.size());
+        adapterInfo.luid = luid;
+
+        outAdapters.push_back(std::move(adapterInfo));
+    }
+}
+
+bool DeviceManager_DX11::CreateDevice()
+{
+    int adapterIndex = m_DeviceParams.adapterIndex;
+    if (adapterIndex < 0)
+        adapterIndex = 0;
+
+    if (FAILED(m_DxgiFactory->EnumAdapters(adapterIndex, &m_DxgiAdapter)))
+    {
+        if (adapterIndex == 0)
+            donut::log::error("Cannot find any DXGI adapters in the system.");
+        else
+            donut::log::error("The specified DXGI adapter %d does not exist.", adapterIndex);
+        return false;
+    }
+    
+    {
+        DXGI_ADAPTER_DESC aDesc;
+        m_DxgiAdapter->GetDesc(&aDesc);
+
+        m_RendererString = GetAdapterName(aDesc);
+        m_IsNvidia = IsNvDeviceID(aDesc.VendorId);
+    }
+
+    UINT createFlags = 0;
+    if (m_DeviceParams.enableDebugRuntime)
+        createFlags |= D3D11_CREATE_DEVICE_DEBUG;
+
+    const HRESULT hr = D3D11CreateDevice(
+        m_DxgiAdapter, // pAdapter
+        D3D_DRIVER_TYPE_UNKNOWN, // DriverType
+        nullptr, // Software
+        createFlags, // Flags
+        &m_DeviceParams.featureLevel, // pFeatureLevels
+        1, // FeatureLevels
+        D3D11_SDK_VERSION, // SDKVersion
+        &m_Device, // ppDevice
+        nullptr, // pFeatureLevel
+        &m_ImmediateContext // ppImmediateContext
+    );
+
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    nvrhi::d3d11::DeviceDesc deviceDesc;
+    deviceDesc.messageCallback = &DefaultMessageCallback::GetInstance();
+    deviceDesc.context = m_ImmediateContext;
+#if DONUT_WITH_AFTERMATH
+    deviceDesc.aftermathEnabled = m_DeviceParams.enableAftermath;
+#endif
+
+    m_NvrhiDevice = nvrhi::d3d11::createDevice(deviceDesc);
+
+    if (m_DeviceParams.enableNvrhiValidationLayer)
+    {
+        m_NvrhiDevice = nvrhi::validation::createValidationLayer(m_NvrhiDevice);
+    }
+
+    return true;
+}
+
+bool DeviceManager_DX11::CreateSwapChain()
 {
     UINT windowStyle = m_DeviceParams.startFullscreen
         ? (WS_POPUP | WS_SYSMENU | WS_VISIBLE)
@@ -266,41 +265,8 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
 
     RECT rect = { 0, 0, LONG(m_DeviceParams.backBufferWidth), LONG(m_DeviceParams.backBufferHeight) };
     AdjustWindowRect(&rect, windowStyle, FALSE);
-
-    RefCountPtr<IDXGIAdapter> targetAdapter;
     
-    if (m_DeviceParams.adapter)
-    {
-        targetAdapter = m_DeviceParams.adapter;
-    }
-    else
-    {
-        targetAdapter = FindAdapter(m_DeviceParams.adapterNameSubstring);
-
-        if (!targetAdapter)
-        {
-#pragma warning(push)
-#pragma warning(disable: 4244) // warning C4244: 'argument': conversion from 'wchar_t' to 'const _Elem', possible loss of data
-                               // There is no standard way to do the conversion safely in c++17, std::codecvt is deprecated.
-            std::string adapterNameStr(m_DeviceParams.adapterNameSubstring.begin(), m_DeviceParams.adapterNameSubstring.end());
-#pragma warning(pop)
-
-            donut::log::error("Could not find an adapter matching %s\n", adapterNameStr.c_str());
-            return false;
-        }
-    }
-
-    {
-        DXGI_ADAPTER_DESC aDesc;
-        targetAdapter->GetDesc(&aDesc);
-
-        std::wstring adapterName = aDesc.Description;
-        m_RendererString = std::string(adapterName.begin(), adapterName.end());
-
-        m_IsNvidia = IsNvDeviceID(aDesc.VendorId);
-    }
-
-    if (MoveWindowOntoAdapter(targetAdapter, rect))
+    if (MoveWindowOntoAdapter(m_DxgiAdapter, rect))
     {
         glfwSetWindowPos(m_Window, rect.left, rect.top);
     }
@@ -341,40 +307,13 @@ bool DeviceManager_DX11::CreateDeviceAndSwapChain()
         m_SwapChainDesc.BufferDesc.Format = nvrhi::d3d11::convertFormat(m_DeviceParams.swapChainFormat);
         break;
     }
-
-    UINT createFlags = 0;
-    if (m_DeviceParams.enableDebugRuntime)
-        createFlags |= D3D11_CREATE_DEVICE_DEBUG;
-
-    const HRESULT hr = D3D11CreateDeviceAndSwapChain(
-        targetAdapter, // pAdapter
-        D3D_DRIVER_TYPE_UNKNOWN, // DriverType
-        nullptr, // Software
-        createFlags, // Flags
-        &m_DeviceParams.featureLevel, // pFeatureLevels
-        1, // FeatureLevels
-        D3D11_SDK_VERSION, // SDKVersion
-        &m_SwapChainDesc, // pSwapChainDesc
-        &m_SwapChain, // ppSwapChain
-        &m_Device, // ppDevice
-        nullptr, // pFeatureLevel
-        &m_ImmediateContext // ppImmediateContext
-    );
+    
+    HRESULT hr = m_DxgiFactory->CreateSwapChain(m_Device, &m_SwapChainDesc, &m_SwapChain);
     
     if(FAILED(hr))
     {
+        donut::log::error("Failed to create a swap chain, HRESULT = 0x%08x", hr);
         return false;
-    }
-
-    nvrhi::d3d11::DeviceDesc deviceDesc;
-    deviceDesc.messageCallback = &DefaultMessageCallback::GetInstance();
-    deviceDesc.context = m_ImmediateContext;
-
-    m_NvrhiDevice = nvrhi::d3d11::createDevice(deviceDesc);
-
-    if (m_DeviceParams.enableNvrhiValidationLayer)
-    {
-        m_NvrhiDevice = nvrhi::validation::createValidationLayer(m_NvrhiDevice);
     }
 
     bool ret = CreateRenderTarget();
@@ -465,9 +404,20 @@ void DeviceManager_DX11::ResizeSwapChain()
     }
 }
 
-void DeviceManager_DX11::Present()
+void DeviceManager_DX11::Shutdown()
 {
-    m_SwapChain->Present(m_DeviceParams.vsyncEnabled ? 1 : 0, 0);
+    DeviceManager::Shutdown();
+
+    if (m_DeviceParams.enableDebugRuntime)
+    {
+        ReportLiveObjects();
+    }
+}
+
+bool DeviceManager_DX11::Present()
+{
+    HRESULT result = m_SwapChain->Present(m_DeviceParams.vsyncEnabled ? 1 : 0, 0);
+    return SUCCEEDED(result);
 }
 
 DeviceManager *DeviceManager::CreateD3D11()

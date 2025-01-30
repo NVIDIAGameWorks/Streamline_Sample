@@ -24,6 +24,7 @@
 
 #include <vector>
 #include <string>
+#include <cstdint>
 
 namespace ShaderMake
 {
@@ -62,12 +63,16 @@ std::string FormatShaderNotFoundMessage(
     uint32_t numConstants
 );
 
+typedef bool (*WriteFileCallback)(const void* data, size_t size, void* context);
+
 bool WriteFileHeader(
-	FILE* file
+	WriteFileCallback write,
+    void* context
 );
 
 bool WritePermutation(
-	FILE* file,
+	WriteFileCallback write,
+    void* context,
 	const std::string& permutationKey,
 	const void* binary,
 	size_t binarySize

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -20,13 +20,19 @@
 * SOFTWARE.
 */
 
-#include <rtxmu/VulkanSuballocator.h>
+#include "rtxmu/VulkanSuballocator.h"
 
 namespace rtxmu
 {
-    vk::DispatchLoaderDynamic VkBlock::m_dispatchLoader;
+    Allocator* VkBlock::m_allocator = nullptr;
+    void VkBlock::setAllocator(Allocator* allocator)
+    {
+        m_allocator = allocator;
+    }
 
-    vk::DispatchLoaderDynamic& VkBlock::getDispatchLoader()
+    VkDispatchLoaderDynamic VkBlock::m_dispatchLoader;
+
+    VkDispatchLoaderDynamic& VkBlock::getDispatchLoader()
     {
         return m_dispatchLoader;
     }
@@ -72,21 +78,31 @@ namespace rtxmu
         return m_buffer;
     }
 
-    void VkBlock::allocate(Allocator*              allocator,
-                           vk::DeviceSize          size,
+    void VkBlock::allocate(vk::DeviceSize          size,
                            vk::BufferUsageFlags    usageFlags,
                            vk::MemoryPropertyFlags propFlags,
-                           vk::MemoryHeapFlags     heapflags)
+                           vk::MemoryHeapFlags     heapflags,
+                           uint32_t                alignment)
     {
         auto bufferInfo = vk::BufferCreateInfo()
             .setSize(size)
             .setUsage(usageFlags)
             .setSharingMode(vk::SharingMode::eExclusive);
 
-        m_buffer = allocator->device.createBuffer(bufferInfo, nullptr, VkBlock::getDispatchLoader());
+        m_buffer = m_allocator->device.createBuffer(bufferInfo, nullptr, VkBlock::getDispatchLoader());
 
-        vk::MemoryRequirements memoryRequirements = allocator->device.getBufferMemoryRequirements(m_buffer, m_dispatchLoader);
-        uint32_t memoryTypeIndex = getMemoryIndex(allocator->physicalDevice, memoryRequirements.memoryTypeBits, propFlags, heapflags);
+        vk::MemoryRequirements memoryRequirements = m_allocator->device.getBufferMemoryRequirements(m_buffer, m_dispatchLoader);
+        uint32_t memoryTypeIndex = getMemoryIndex(m_allocator->physicalDevice, memoryRequirements.memoryTypeBits, propFlags, heapflags);
+
+        // Passed in alignment needs to be the same for alignment returned by getBufferMemoryRequirements
+        if (memoryRequirements.alignment != alignment)
+        {
+            if (Logger::isEnabled(Level::FATAL))
+            {
+                Logger::log(Level::FATAL, "Alignment doesn't match for allocation\n");
+                assert(0);
+            }
+        }
 
         auto memoryAllocateFlags = vk::MemoryAllocateFlagsInfo()
             .setFlags(vk::MemoryAllocateFlagBits::eDeviceAddress);
@@ -96,14 +112,14 @@ namespace rtxmu
             .setAllocationSize(size)
             .setMemoryTypeIndex(memoryTypeIndex);
 
-        m_memory = allocator->device.allocateMemory(memoryInfo, nullptr, VkBlock::getDispatchLoader());
-        allocator->device.bindBufferMemory(m_buffer, m_memory, 0, VkBlock::getDispatchLoader());
+        m_memory = m_allocator->device.allocateMemory(memoryInfo, nullptr, VkBlock::getDispatchLoader());
+        m_allocator->device.bindBufferMemory(m_buffer, m_memory, 0, VkBlock::getDispatchLoader());
     }
 
-    void VkBlock::free(Allocator* allocator)
+    void VkBlock::free()
     {
-        allocator->device.destroyBuffer(m_buffer, nullptr, VkBlock::getDispatchLoader());
-        allocator->device.freeMemory(m_memory, nullptr, VkBlock::getDispatchLoader());
+        m_allocator->device.destroyBuffer(m_buffer, nullptr, VkBlock::getDispatchLoader());
+        m_allocator->device.freeMemory(m_memory, nullptr, VkBlock::getDispatchLoader());
     }
 
     uint64_t VkBlock::getVMA() { return (uint64_t)(VkDeviceMemory)(m_memory); }

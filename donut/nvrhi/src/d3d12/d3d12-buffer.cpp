@@ -107,6 +107,8 @@ namespace nvrhi::d3d12
             case CpuAccessMode::None:
                 heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
                 initialState = convertResourceStates(d.initialState);
+                if (initialState != D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE)
+                    initialState = D3D12_RESOURCE_STATE_COMMON;
                 break;
 
             case CpuAccessMode::Read:
@@ -174,6 +176,11 @@ namespace nvrhi::d3d12
         {
             std::wstring wname(desc.debugName.begin(), desc.debugName.end());
             resource->SetName(wname.c_str());
+#if NVRHI_WITH_AFTERMATH
+            // the driver will track the resource internally so don't need to keep the handle around
+            GFSDK_Aftermath_ResourceHandle resourceHandle = {};
+            GFSDK_Aftermath_DX12_RegisterResource(resource, &resourceHandle);
+#endif
         }
     }
 
@@ -256,10 +263,14 @@ namespace nvrhi::d3d12
         if (!buffer->desc.isVirtual)
             return false; // not supported
 
+        D3D12_RESOURCE_STATES initialState = convertResourceStates(buffer->desc.initialState);
+        if (initialState != D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE)
+            initialState = D3D12_RESOURCE_STATE_COMMON;
+
         HRESULT hr = m_Context.device->CreatePlacedResource(
             heap->heap, offset,
             &buffer->resourceDesc,
-            convertResourceStates(buffer->desc.initialState),
+            initialState,
             nullptr,
             IID_PPV_ARGS(&buffer->resource));
 

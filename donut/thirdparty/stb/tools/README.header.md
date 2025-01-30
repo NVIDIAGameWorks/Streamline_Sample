@@ -1,19 +1,22 @@
 stb
 ===
 
-single-file public domain (or MIT licensed) libraries for C/C++ <a name="stb_libs"></a>
+single-file public domain (or MIT licensed) libraries for C/C++
+
+# This project discusses security-relevant bugs in public in Github Issues and Pull Requests, and it may take significant time for security fixes to be implemented or merged. If this poses an unreasonable risk to your project, do not use stb libraries.
 
 Noteworthy:
 
-* image loader: <a href="/nothings/stb/blob/master/stb_image.h">stb_image.h</a>
-* image writer: <a href="/nothings/stb/blob/master/stb_image_write.h">stb_image_write.h</a>
-* image resizer: <a href="/nothings/stb/blob/master/stb_image_resize.h">stb_image_resize.h></a>
-* font text rasterizer: <a href="/nothings/stb/blob/master/stb_truetype.h">stb_truetype.h</a>
-* typesafe containers: <a href="/nothings/stb/blob/master/stb_ds.h">stb_ds.h</a>
+* image loader: [stb_image.h](stb_image.h)
+* image writer: [stb_image_write.h](stb_image_write.h)
+* image resizer: [stb_image_resize2.h](stb_image_resize2.h)
+* font text rasterizer: [stb_truetype.h](stb_truetype.h)
+* typesafe containers: [stb_ds.h](stb_ds.h)
 
-Most libraries by stb, except: stb_dxt by Fabian "ryg" Giesen, stb_image_resize
-by Jorge L. "VinoBS" Rodriguez, and stb_sprintf by Jeff Roberts.
+Most libraries by stb, except: stb_dxt by Fabian "ryg" Giesen, original stb_image_resize
+by Jorge L. "VinoBS" Rodriguez, and stb_image_resize2 and stb_sprintf by Jeff Roberts.
 
+<a name="stb_libs"></a>
 
 library    | lastest version | category | LoC | description
 --------------------- | ---- | -------- | --- | --------------------------------

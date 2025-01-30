@@ -256,19 +256,19 @@ nvrhi::GraphicsAPI donut::app::GetGraphicsAPIFromCommandLine(int argc, const cha
     {
         const char* arg = argv[n];
 
-        if (!strcmp(arg, "-d3d11") || !strcmp(arg, "-dx11"))
+        if (!strcmp(arg, "-d3d11") || !strcmp(arg, "-dx11") || !strcmp(arg, "--d3d11") || !strcmp(arg, "--dx11"))
             return nvrhi::GraphicsAPI::D3D11;
-        else if (!strcmp(arg, "-d3d12") || !strcmp(arg, "-dx12"))
+        else if (!strcmp(arg, "-d3d12") || !strcmp(arg, "-dx12") || !strcmp(arg, "--d3d12") || !strcmp(arg, "--dx12"))
             return nvrhi::GraphicsAPI::D3D12;
-        else if(!strcmp(arg, "-vk") || !strcmp(arg, "-vulkan"))
+        else if(!strcmp(arg, "-vk") || !strcmp(arg, "-vulkan") || !strcmp(arg, "--vk") || !strcmp(arg, "--vulkan"))
             return nvrhi::GraphicsAPI::VULKAN;
     }
 
-#if USE_DX12
+#if DONUT_WITH_DX12
     return nvrhi::GraphicsAPI::D3D12;
-#elif USE_VK
+#elif DONUT_WITH_VULKAN
     return nvrhi::GraphicsAPI::VULKAN;
-#elif USE_DX11
+#elif DONUT_WITH_DX11
     return nvrhi::GraphicsAPI::D3D11;
 #else
     #error "No Graphics API defined"

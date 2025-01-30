@@ -24,6 +24,9 @@
 #include <donut/core/vfs/VFS.h>
 #include <donut/core/log.h>
 #include <ShaderMake/ShaderBlob.h>
+#if DONUT_WITH_AFTERMATH
+#include <donut/app/AftermathCrashDump.h>
+#endif
 
 using namespace std;
 using namespace donut::vfs;
@@ -36,6 +39,18 @@ ShaderFactory::ShaderFactory(nvrhi::DeviceHandle rendererInterface,
 	, m_fs(fs)
 	, m_basePath(basePath)
 {
+#if DONUT_WITH_AFTERMATH
+    if (m_Device->isAftermathEnabled())
+        m_Device->getAftermathCrashDumpHelper().registerShaderBinaryLookupCallback(this, std::bind(&ShaderFactory::FindShaderFromHash, this, std::placeholders::_1, std::placeholders::_2));
+#endif
+}
+
+ShaderFactory::~ShaderFactory()
+{
+#if DONUT_WITH_AFTERMATH
+    if (m_Device->isAftermathEnabled())
+        m_Device->getAftermathCrashDumpHelper().unRegisterShaderBinaryLookupCallback(this);
+#endif
 }
 
 void ShaderFactory::ClearCache()
@@ -45,6 +60,9 @@ void ShaderFactory::ClearCache()
 
 std::shared_ptr<IBlob> ShaderFactory::GetBytecode(const char* fileName, const char* entryName)
 {
+    if (!m_fs)
+        return nullptr;
+        
     if (!entryName)
         entryName = "main";
 
@@ -76,19 +94,34 @@ std::shared_ptr<IBlob> ShaderFactory::GetBytecode(const char* fileName, const ch
     return data;
 }
 
-
-nvrhi::ShaderHandle ShaderFactory::CreateShader(const char* fileName, const char* entryName, const vector<ShaderMacro>* pDefines, nvrhi::ShaderType shaderType)
-{
-    nvrhi::ShaderDesc desc = nvrhi::ShaderDesc(shaderType);
-    desc.debugName = fileName;
-    return CreateShader(fileName, entryName, pDefines, desc);
-}
-
 nvrhi::ShaderHandle ShaderFactory::CreateShader(const char* fileName, const char* entryName, const vector<ShaderMacro>* pDefines, const nvrhi::ShaderDesc& desc)
 {
     std::shared_ptr<IBlob> byteCode = GetBytecode(fileName, entryName);
 
     if(!byteCode)
+        return nullptr;
+
+    nvrhi::ShaderDesc descCopy = desc;
+    descCopy.entryName = entryName;
+    if (descCopy.debugName.empty())
+        descCopy.debugName = fileName;
+
+    return CreateStaticShader(StaticShader{ byteCode->data(), byteCode->size() }, pDefines, descCopy);
+}
+
+nvrhi::ShaderLibraryHandle ShaderFactory::CreateShaderLibrary(const char* fileName, const std::vector<ShaderMacro>* pDefines)
+{
+    std::shared_ptr<IBlob> byteCode = GetBytecode(fileName, nullptr);
+
+    if (!byteCode)
+        return nullptr;
+
+    return CreateStaticShaderLibrary(StaticShader{ byteCode->data(), byteCode->size() }, pDefines);
+}
+
+nvrhi::ShaderHandle ShaderFactory::CreateStaticShader(StaticShader shader, const std::vector<ShaderMacro>* pDefines, const nvrhi::ShaderDesc& desc)
+{
+    if (!shader.pBytecode || !shader.size)
         return nullptr;
 
     vector<ShaderMake::ShaderConstant> constants;
@@ -98,27 +131,41 @@ nvrhi::ShaderHandle ShaderFactory::CreateShader(const char* fileName, const char
             constants.push_back(ShaderMake::ShaderConstant{ define.name.c_str(), define.definition.c_str() });
     }
 
-    nvrhi::ShaderDesc descCopy = desc;
-    descCopy.entryName = entryName;
-
     const void* permutationBytecode = nullptr;
     size_t permutationSize = 0;
-    if (!ShaderMake::FindPermutationInBlob(byteCode->data(), byteCode->size(), constants.data(), uint32_t(constants.size()), &permutationBytecode, &permutationSize))
+    if (!ShaderMake::FindPermutationInBlob(shader.pBytecode, shader.size, constants.data(), uint32_t(constants.size()), &permutationBytecode, &permutationSize))
     {
-        const std::string message = ShaderMake::FormatShaderNotFoundMessage(byteCode->data(), byteCode->size(), constants.data(), uint32_t(constants.size()));
+        const std::string message = ShaderMake::FormatShaderNotFoundMessage(shader.pBytecode, shader.size, constants.data(), uint32_t(constants.size()));
         log::error("%s", message.c_str());
         
         return nullptr;
     }
 
-    return m_Device->createShader(descCopy, permutationBytecode, permutationSize);
+    return m_Device->createShader(desc, permutationBytecode, permutationSize);
 }
 
-nvrhi::ShaderLibraryHandle ShaderFactory::CreateShaderLibrary(const char* fileName, const std::vector<ShaderMacro>* pDefines)
+nvrhi::ShaderHandle ShaderFactory::CreateStaticPlatformShader(StaticShader dxbc, StaticShader dxil, StaticShader spirv, const std::vector<ShaderMacro>* pDefines, const nvrhi::ShaderDesc& desc)
 {
-    std::shared_ptr<IBlob> byteCode = GetBytecode(fileName, nullptr);
+    StaticShader shader;
+    switch(m_Device->getGraphicsAPI())
+    {
+        case nvrhi::GraphicsAPI::D3D11:
+            shader = dxbc;
+            break;
+        case nvrhi::GraphicsAPI::D3D12:
+            shader = dxil;
+            break;
+        case nvrhi::GraphicsAPI::VULKAN:
+            shader = spirv;
+            break;
+    }
 
-    if (!byteCode)
+    return CreateStaticShader(shader, pDefines, desc);
+}
+
+nvrhi::ShaderLibraryHandle ShaderFactory::CreateStaticShaderLibrary(StaticShader shader, const std::vector<ShaderMacro>* pDefines)
+{
+    if (!shader.pBytecode || !shader.size)
         return nullptr;
 
     vector<ShaderMake::ShaderConstant> constants;
@@ -130,13 +177,69 @@ nvrhi::ShaderLibraryHandle ShaderFactory::CreateShaderLibrary(const char* fileNa
     
     const void* permutationBytecode = nullptr;
     size_t permutationSize = 0;
-    if (!ShaderMake::FindPermutationInBlob(byteCode->data(), byteCode->size(), constants.data(), uint32_t(constants.size()), &permutationBytecode, &permutationSize))
+    if (!ShaderMake::FindPermutationInBlob(shader.pBytecode, shader.size, constants.data(), uint32_t(constants.size()), &permutationBytecode, &permutationSize))
     {
-        const std::string message = ShaderMake::FormatShaderNotFoundMessage(byteCode->data(), byteCode->size(), constants.data(), uint32_t(constants.size()));
+        const std::string message = ShaderMake::FormatShaderNotFoundMessage(shader.pBytecode, shader.size, constants.data(), uint32_t(constants.size()));
         log::error("%s", message.c_str());
 
         return nullptr;
     }
 
     return m_Device->createShaderLibrary(permutationBytecode, permutationSize);
+}
+
+nvrhi::ShaderLibraryHandle ShaderFactory::CreateStaticPlatformShaderLibrary(StaticShader dxil, StaticShader spirv, const std::vector<ShaderMacro>* pDefines)
+{
+    StaticShader shader;
+    switch(m_Device->getGraphicsAPI())
+    {
+        case nvrhi::GraphicsAPI::D3D12:
+            shader = dxil;
+            break;
+        case nvrhi::GraphicsAPI::VULKAN:
+            shader = spirv;
+            break;
+        default:
+            break;
+    }
+
+    return CreateStaticShaderLibrary(shader, pDefines);
+}
+
+nvrhi::ShaderHandle ShaderFactory::CreateAutoShader(const char* fileName, const char* entryName, StaticShader dxbc, StaticShader dxil, StaticShader spirv, const std::vector<ShaderMacro>* pDefines, const nvrhi::ShaderDesc& desc)
+{
+    nvrhi::ShaderDesc descCopy = desc;
+    descCopy.entryName = entryName;
+    if (descCopy.debugName.empty())
+        descCopy.debugName = fileName;
+
+    nvrhi::ShaderHandle shader = CreateStaticPlatformShader(dxbc, dxil, spirv, pDefines, descCopy);
+    if (shader)
+        return shader;
+        
+    return CreateShader(fileName, entryName, pDefines, desc);
+}
+
+nvrhi::ShaderLibraryHandle ShaderFactory::CreateAutoShaderLibrary(const char* fileName, StaticShader dxil, StaticShader spirv, const std::vector<ShaderMacro>* pDefines)
+{
+    nvrhi::ShaderLibraryHandle shader = CreateStaticPlatformShaderLibrary(dxil, spirv, pDefines);
+    if (shader)
+        return shader;
+
+    return CreateShaderLibrary(fileName, pDefines);
+}
+
+std::pair<const void*, size_t> donut::engine::ShaderFactory::FindShaderFromHash(uint64_t hash, std::function<uint64_t(std::pair<const void*, size_t>, nvrhi::GraphicsAPI)> hashGenerator)
+{
+    for (auto& entry : m_BytecodeCache)
+    {
+        const void* shaderBytes = entry.second->data();
+        size_t shaderSize = entry.second->size();
+        uint64_t entryHash = hashGenerator(std::make_pair(shaderBytes, shaderSize), m_Device->getGraphicsAPI());
+        if (entryHash == hash)
+        {
+            return std::make_pair(shaderBytes, shaderSize);
+        }
+    }
+    return std::make_pair(nullptr, 0);
 }

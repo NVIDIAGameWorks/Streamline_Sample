@@ -55,6 +55,12 @@
 #include <sl_dlss_g.h>
 #include <sl_deepdvc.h>
 
+#ifdef STREAMLINE_FEATURE_LATEWARP
+#include <sl_latewarp.h>
+#endif
+
+#include "RenderTargets.h"
+
 
 static constexpr int APP_ID = 231313132;
 
@@ -101,7 +107,7 @@ private:
     nvrhi::GraphicsAPI m_api = nvrhi::GraphicsAPI::D3D12;
     nvrhi::IDevice* m_Device = nullptr;
 
-#ifdef USE_DX11
+#if DONUT_WITH_DX11
     LUID m_d3d11Luid;
 #endif
 
@@ -121,6 +127,9 @@ private:
     sl::DLSSGOptions m_dlssg_consts{};
     sl::DLSSGState m_dlssg_settings{};
 
+    bool m_latewarp_available = false;
+    bool m_latewarp_triggerSwapchainRecreation = false;
+    bool m_latewarp_shouldLoad = false;
 
     bool m_reflex_available = false;
     sl::ReflexOptions m_reflex_consts{};
@@ -193,7 +202,8 @@ public:
     void ProxyToNative(void* proxy, void** native);
     void NativeToProxy(void* proxy, void** native);
     void FindAdapter(void*& adapterPtr, void* vkDevices = nullptr);
-#ifdef USE_DX11
+    static void QueueGPUWaitOnSyncObjectSet(nvrhi::IDevice* pDevice, nvrhi::CommandQueue cmdQType, void* syncObj, uint64_t syncObjVal);
+#if DONUT_WITH_DX11
     LUID& getD3D11LUID() { return m_d3d11Luid; }
 #endif
 
@@ -232,6 +242,14 @@ public:
 
     void UnTagResources_DeepDVC();
 
+    void TagResources_Latewarp(
+        nvrhi::ICommandList *commandList,
+        const donut::engine::IView *view,
+        nvrhi::ITexture *backbuffer,
+        nvrhi::ITexture *uiColorAlpha,
+        nvrhi::ITexture *noWarpMask,
+        sl::Extent backBufferExtent);
+
     struct DLSSSettings
     {
         donut::math::int2 optimalRenderSize;
@@ -261,28 +279,42 @@ public:
 
     bool GetReflexAvailable() { return m_reflex_available; }
     bool GetPCLAvailable() const { return m_pcl_available; }
-    void SetReflexConsts(const sl::ReflexOptions consts);
     static void Callback_FrameCount_Reflex_Sleep_Input_SimStart(donut::app::DeviceManager& manager);
-    static void ReflexCallback_SimEnd(donut::app::DeviceManager& manager);
-    static void ReflexCallback_RenderStart(donut::app::DeviceManager& manager);
-    static void ReflexCallback_RenderEnd(donut::app::DeviceManager& manager);
-    static void ReflexCallback_PresentStart(donut::app::DeviceManager& manager);
-    static void ReflexCallback_PresentEnd(donut::app::DeviceManager& manager);
 
-    void ReflexTriggerFlash(int frameNumber);
-    void ReflexTriggerPcPing(int frameNumber);
+    void ReflexTriggerFlash();
+    void ReflexTriggerPcPing();
     void QueryReflexStats(bool& reflex_lowLatencyAvailable, bool& reflex_flashAvailable, std::string& stats);
     void SetReflexFlashIndicator(bool enabled) {m_reflex_driverFlashIndicatorEnable = enabled; }
     bool GetReflexFlashIndicatorEnable() { return m_reflex_driverFlashIndicatorEnable; }
 
+    void SetReflexConsts(const sl::ReflexOptions consts);
+    void ReflexCallback_Sleep(donut::app::DeviceManager& manager, uint32_t frameID);
+    void ReflexCallback_SimStart(donut::app::DeviceManager& manager, uint32_t frameID);
+    void ReflexCallback_SimEnd(donut::app::DeviceManager& manager, uint32_t frameID);
+    void ReflexCallback_RenderStart(donut::app::DeviceManager& manager, uint32_t frameID);
+    void ReflexCallback_RenderEnd(donut::app::DeviceManager& manager, uint32_t frameID);
+    void ReflexCallback_PresentStart(donut::app::DeviceManager& manager, uint32_t frameID);
+    void ReflexCallback_PresentEnd(donut::app::DeviceManager& manager, uint32_t frameID);
+    sl::FrameToken *GetCurrentFrameToken() { return m_currentFrame; }
+
     void SetDLSSGOptions(const sl::DLSSGOptions consts);
     bool GetDLSSGAvailable() { return m_dlssg_available; }
     bool GetDLSSGLastEnable() { return m_dlssg_consts.mode != sl::DLSSGMode::eOff; }
-    void QueryDLSSGState(uint64_t& estimatedVRamUsage, int& fps_multiplier, sl::DLSSGStatus& status, int& minSize);
+    uint64_t GetDLSSGLastFenceValue() { return m_dlssg_settings.lastPresentInputsProcessingCompletionFenceValue; }
+    void QueryDLSSGState(uint64_t& estimatedVRamUsage, int& fps_multiplier, sl::DLSSGStatus& status, int& minSize, int& framesMax, void*& pFence, uint64_t& fenceValue);
     void Set_DLSSG_SwapChainRecreation(bool on) { m_dlssg_triggerswapchainRecreation = true; m_dlssg_shoudLoad = on; }
     bool Get_DLSSG_SwapChainRecreation(bool& turn_on) const;
     void Quiet_DLSSG_SwapChainRecreation() { m_dlssg_triggerswapchainRecreation = false; }
     void CleanupDLSSG(bool wfi);
 
+    void SetReflexCameraData(sl::FrameToken& frameToken, const sl::ReflexCameraData& cameraData);
+    bool GetLatewarpAvailable() { return m_latewarp_available; }
+#ifdef STREAMLINE_FEATURE_LATEWARP
+    void SetLatewarpOptions(const sl::LatewarpOptions& options);
+#endif
+    void Set_Latewarp_SwapChainRecreation(bool on) { m_latewarp_triggerSwapchainRecreation = true; m_latewarp_shouldLoad = on; }
+    bool Get_Latewarp_SwapChainRecreation(bool &turn_on) const { turn_on = m_latewarp_shouldLoad; return m_latewarp_triggerSwapchainRecreation; }
+    void Quiet_Latewarp_SwapChainRecreation() { m_latewarp_triggerSwapchainRecreation = false; }
+    void EvaluateLatewarp(nvrhi::ICommandList* commandList, RenderTargets* renderTargets, nvrhi::ITexture* inputColor, nvrhi::ITexture* outputColor, const donut::engine::IView* view) {}
 };
 

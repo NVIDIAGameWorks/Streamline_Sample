@@ -128,6 +128,11 @@ namespace nvrhi::d3d12
             m_MeshletsSupported = m_Options7.MeshShaderTier >= D3D12_MESH_SHADER_TIER_1;
         }
 
+        if (SUCCEEDED(m_Context.device->QueryInterface(&m_Context.device8)) && hasOptions7)
+        {
+            m_SamplerFeedbackSupported = m_Options7.SamplerFeedbackTier >= D3D12_SAMPLER_FEEDBACK_TIER_0_9;
+        }
+
         if (hasOptions6)
         {
             m_VariableRateShadingSupported = m_Options6.VariableShadingRateTier >= D3D12_VARIABLE_SHADING_RATE_TIER_2;
@@ -208,6 +213,24 @@ namespace nvrhi::d3d12
 #endif // #if NVRHI_WITH_NVAPI_OPACITY_MICROMAPS
 
 #endif // #if NVRHI_D3D12_WITH_NVAPI
+
+#if NVRHI_WITH_AFTERMATH
+        if (desc.aftermathEnabled)
+        {
+            const uint32_t aftermathFlags = GFSDK_Aftermath_FeatureFlags_EnableMarkers | GFSDK_Aftermath_FeatureFlags_EnableResourceTracking | GFSDK_Aftermath_FeatureFlags_GenerateShaderDebugInfo | GFSDK_Aftermath_FeatureFlags_EnableShaderErrorReporting;
+            GFSDK_Aftermath_Result aftermathResult = GFSDK_Aftermath_DX12_Initialize(GFSDK_Aftermath_Version_API, aftermathFlags, m_Context.device);
+            if (!GFSDK_Aftermath_SUCCEED(aftermathResult))
+            {
+                std::stringstream ss;
+                ss << "Aftermath initialize call failed, result = 0x" << std::hex << std::setw(8) << aftermathResult;
+                m_Context.error(ss.str());
+            }
+            else
+            {
+                m_AftermathEnabled = true;
+            }
+        }
+#endif
     }
 
     Device::~Device()
@@ -221,7 +244,7 @@ namespace nvrhi::d3d12
         }
     }
 
-    void Device::waitForIdle()
+    bool Device::waitForIdle()
     {
         // Wait for every queue to reach its last submitted instance
         for (const auto& pQueue : m_Queues)
@@ -234,6 +257,7 @@ namespace nvrhi::d3d12
                 WaitForFence(pQueue->fence, pQueue->lastSubmittedInstance, m_FenceEvent);
             }
         }
+        return true;
     }
     
     Object RootSignature::getNativeObject(ObjectType objectType)
@@ -273,7 +297,9 @@ namespace nvrhi::d3d12
         
         m_d3d12desc.MipLODBias = m_Desc.mipBias;
         m_d3d12desc.MaxAnisotropy = std::max((UINT)m_Desc.maxAnisotropy, 1U);
-        m_d3d12desc.ComparisonFunc = D3D12_COMPARISON_FUNC_LESS;
+        m_d3d12desc.ComparisonFunc = desc.reductionType == SamplerReductionType::Comparison
+            ? D3D12_COMPARISON_FUNC_LESS
+            : D3D12_COMPARISON_FUNC_NEVER;
         m_d3d12desc.BorderColor[0] = m_Desc.borderColor.r;
         m_d3d12desc.BorderColor[1] = m_Desc.borderColor.g;
         m_d3d12desc.BorderColor[2] = m_Desc.borderColor.b;
@@ -307,6 +333,8 @@ namespace nvrhi::d3d12
             return Object(m_Context.device);
         case ObjectTypes::Nvrhi_D3D12_Device:
             return Object(this);
+        case ObjectTypes::D3D12_CommandQueue:
+            return Object(getQueue(CommandQueue::Graphics)->queue.Get());
         default:
             return nullptr;
         }
@@ -343,7 +371,7 @@ namespace nvrhi::d3d12
         HRESULT hr = m_Context.device->GetDeviceRemovedReason();
         if (FAILED(hr))
         {
-            m_Context.messageCallback->message(MessageSeverity::Fatal, "Device Removed!");
+            m_Context.messageCallback->message(MessageSeverity::Error, "Device Removed!");
         }
 
         return pQueue->lastSubmittedInstance;
@@ -356,6 +384,101 @@ namespace nvrhi::d3d12
         assert(instanceID <= pExecutionQueue->lastSubmittedInstance);
 
         pWaitQueue->queue->Wait(pExecutionQueue->fence, instanceID);
+    }
+
+    void Device::getTextureTiling(ITexture* texture, uint32_t* numTiles, PackedMipDesc* desc, TileShape* tileShape, uint32_t* subresourceTilingsNum, SubresourceTiling* _subresourceTilings)
+    {
+        ID3D12Resource* resource = checked_cast<Texture*>(texture)->resource;
+        D3D12_RESOURCE_DESC resourceDesc = resource->GetDesc();
+
+        D3D12_PACKED_MIP_INFO packedMipDesc = {};
+        D3D12_TILE_SHAPE standardTileShapeForNonPackedMips = {};
+        D3D12_SUBRESOURCE_TILING subresourceTilings[16];
+
+        m_Context.device->GetResourceTiling(resource, numTiles, desc ? &packedMipDesc : nullptr, tileShape ? &standardTileShapeForNonPackedMips : nullptr, subresourceTilingsNum, 0, subresourceTilings);
+
+        if (desc)
+        {
+            desc->numStandardMips = packedMipDesc.NumStandardMips;
+            desc->numPackedMips = packedMipDesc.NumPackedMips;
+            desc->startTileIndexInOverallResource = packedMipDesc.StartTileIndexInOverallResource;
+            desc->numTilesForPackedMips = packedMipDesc.NumTilesForPackedMips;
+        }
+
+        if (tileShape)
+        {
+            tileShape->widthInTexels = standardTileShapeForNonPackedMips.WidthInTexels;
+            tileShape->heightInTexels = standardTileShapeForNonPackedMips.HeightInTexels;
+            tileShape->depthInTexels = standardTileShapeForNonPackedMips.DepthInTexels;
+        }
+
+        for (uint32_t i = 0; i < *subresourceTilingsNum; ++i)
+        {
+            _subresourceTilings[i].widthInTiles = subresourceTilings[i].WidthInTiles;
+            _subresourceTilings[i].heightInTiles = subresourceTilings[i].HeightInTiles;
+            _subresourceTilings[i].depthInTiles = subresourceTilings[i].DepthInTiles;
+            _subresourceTilings[i].startTileIndexInOverallResource = subresourceTilings[i].StartTileIndexInOverallResource;
+        }
+    }
+
+    void Device::updateTextureTileMappings(ITexture* _texture, const TextureTilesMapping* tileMappings, uint32_t numTileMappings, CommandQueue executionQueue)
+    {
+        Queue* queue = getQueue(executionQueue);
+        Texture* texture = checked_cast<Texture*>(_texture);
+
+        D3D12_TILE_SHAPE tileShape;
+        D3D12_SUBRESOURCE_TILING subresourceTiling;
+        m_Context.device->GetResourceTiling(texture->resource, nullptr, nullptr, &tileShape, nullptr, 0, &subresourceTiling);
+
+        for (size_t i = 0; i < numTileMappings; i++)
+        {
+            ID3D12Heap* heap = tileMappings[i].heap ? checked_cast<Heap*>(tileMappings[i].heap)->heap : nullptr;
+
+            uint32_t numRegions = tileMappings[i].numTextureRegions;
+            std::vector<D3D12_TILED_RESOURCE_COORDINATE> resourceCoordinates(numRegions);
+            std::vector<D3D12_TILE_REGION_SIZE> regionSizes(numRegions);
+            std::vector<D3D12_TILE_RANGE_FLAGS> rangeFlags(numRegions, heap ? D3D12_TILE_RANGE_FLAG_NONE : D3D12_TILE_RANGE_FLAG_NULL);
+            std::vector<UINT> heapStartOffsets(numRegions);
+            std::vector<UINT> rangeTileCounts(numRegions);
+
+            for (uint32_t j = 0; j < numRegions; ++j)
+            {
+                const TiledTextureCoordinate& tiledTextureCoordinate = tileMappings[i].tiledTextureCoordinates[j];
+                const TiledTextureRegion& tiledTextureRegion = tileMappings[i].tiledTextureRegions[j];
+
+                resourceCoordinates[j].Subresource = tiledTextureCoordinate.mipLevel * texture->desc.arraySize + tiledTextureCoordinate.arrayLevel;
+                resourceCoordinates[j].X = tiledTextureCoordinate.x;
+                resourceCoordinates[j].Y = tiledTextureCoordinate.y;
+                resourceCoordinates[j].Z = tiledTextureCoordinate.z;
+
+                if (tiledTextureRegion.tilesNum)
+                {
+                    regionSizes[j].NumTiles = tiledTextureRegion.tilesNum;
+                    regionSizes[j].UseBox = false;
+                }
+                else
+                {
+                    uint32_t tilesX = (tiledTextureRegion.width + (tileShape.WidthInTexels - 1)) / tileShape.WidthInTexels;
+                    uint32_t tilesY = (tiledTextureRegion.height + (tileShape.HeightInTexels - 1)) / tileShape.HeightInTexels;
+                    uint32_t tilesZ = (tiledTextureRegion.depth + (tileShape.DepthInTexels - 1)) / tileShape.DepthInTexels;
+
+                    regionSizes[j].Width = tilesX;
+                    regionSizes[j].Height = (uint16_t)tilesY;
+                    regionSizes[j].Depth = (uint16_t)tilesZ;
+
+                    regionSizes[j].NumTiles = tilesX * tilesY * tilesZ;
+                    regionSizes[j].UseBox = true;
+                }
+
+                // Offset in tiles
+                if (heap)
+                    heapStartOffsets[j] = (uint32_t)(tileMappings[i].byteOffsets[j] / D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES);
+
+                rangeTileCounts[j] = regionSizes[j].NumTiles;
+            }
+
+            queue->queue->UpdateTileMappings(texture->resource, tileMappings[i].numTextureRegions, resourceCoordinates.data(), regionSizes.data(), heap, numRegions, rangeFlags.data(), heap ? heapStartOffsets.data() : nullptr, rangeTileCounts.data(), D3D12_TILE_MAPPING_FLAG_NONE);
+        }
     }
 
     void Device::runGarbageCollection()
@@ -522,7 +645,7 @@ namespace nvrhi::d3d12
             return &m_Resources.renderTargetViewHeap;
         case DescriptorHeapType::DepthStencilView:
             return &m_Resources.depthStencilViewHeap;
-        case DescriptorHeapType::ShaderResrouceView:
+        case DescriptorHeapType::ShaderResourceView:
             return &m_Resources.shaderResourceViewHeap;
         case DescriptorHeapType::Sampler:
             return &m_Resources.samplerHeap;

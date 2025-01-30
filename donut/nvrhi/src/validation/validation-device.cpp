@@ -241,6 +241,16 @@ namespace nvrhi::validation
         return m_Device->createTexture(patchedDesc);
     }
 
+    void DeviceWrapper::getTextureTiling(ITexture* texture, uint32_t* numTiles, PackedMipDesc* desc, TileShape* tileShape, uint32_t* subresourceTilingsNum, SubresourceTiling* subresourceTilings)
+    {
+        m_Device->getTextureTiling(texture, numTiles, desc, tileShape, subresourceTilingsNum, subresourceTilings);
+    }
+
+    void DeviceWrapper::updateTextureTileMappings(ITexture* texture, const TextureTilesMapping* tileMappings, uint32_t numTileMappings, CommandQueue executionQueue)
+    {
+        m_Device->updateTextureTileMappings(texture, tileMappings, numTileMappings, executionQueue);
+    }
+
     MemoryRequirements DeviceWrapper::getTextureMemoryRequirements(ITexture* texture)
     {
         if (texture == nullptr)
@@ -753,7 +763,7 @@ namespace nvrhi::validation
         ShaderType::Pixel
     };
     
-    bool DeviceWrapper::validatePipelineBindingLayouts(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& bindingLayouts, const std::vector<IShader*>& shaders, GraphicsAPI api) const
+    bool DeviceWrapper::validatePipelineBindingLayouts(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& bindingLayouts, const std::vector<IShader*>& shaders) const
     {
         const int numBindingLayouts = int(bindingLayouts.size());
         bool anyErrors = false;
@@ -788,12 +798,8 @@ namespace nvrhi::validation
 
                     if (layoutDesc)
                     {
-                        if (api != GraphicsAPI::VULKAN)
-                        {
-                            // Visibility does not apply to Vulkan
-                            if (!(layoutDesc->visibility & stage))
+                        if (!(layoutDesc->visibility & stage))
                                 continue;
-                        }
 
                         if (layoutDesc->registerSpace != 0)
                         {
@@ -926,6 +932,15 @@ namespace nvrhi::validation
 
         int pushConstantCount = 0;
         uint32_t pushConstantSize = 0;
+        enum class RegisterSpaceIsDescriptorSet
+        {
+            False,
+            True,
+            Undetermined,
+            Mixed
+        } registerSpaceIsDescriptorSet = RegisterSpaceIsDescriptorSet::Undetermined;
+        static_vector<int, c_MaxBindingLayouts> registerSpaceToLayoutIdx(c_MaxBindingLayouts);
+        registerSpaceToLayoutIdx.fill(-1);
 
         for (int layoutIndex = 0; layoutIndex < numBindingLayouts; layoutIndex++)
         {
@@ -940,7 +955,52 @@ namespace nvrhi::validation
                         pushConstantSize = std::max(pushConstantSize, uint32_t(item.size));
                     }
                 }
+
+                if (layoutDesc->registerSpaceIsDescriptorSet)
+                {
+                    if (layoutDesc->registerSpace >= c_MaxBindingLayouts)
+                    {
+                        std::stringstream errorStream;
+                        errorStream << "Binding layout at index " << layoutIndex << " has registerSpace = " << layoutDesc->registerSpace
+                            << ". Largest supported registerSpace index is " << (c_MaxBindingLayouts-1);
+                        error(errorStream.str());
+                        anyErrors = true;
+                    }
+                    else if (registerSpaceToLayoutIdx[layoutDesc->registerSpace] != -1)
+                    {
+                        std::stringstream errorStream;
+                        errorStream << "Binding layout at index " << layoutIndex << " has registerSpace = " << layoutDesc->registerSpace
+                            << ". That register space has already been used in layout index " << registerSpaceToLayoutIdx[layoutDesc->registerSpace];
+                        error(errorStream.str());
+                        anyErrors = true;
+                    }
+                    registerSpaceToLayoutIdx[layoutDesc->registerSpace] = layoutIndex;
+                    if (registerSpaceIsDescriptorSet == RegisterSpaceIsDescriptorSet::Undetermined)
+                    {
+                        registerSpaceIsDescriptorSet = RegisterSpaceIsDescriptorSet::True;
+                    }
+                    else if (registerSpaceIsDescriptorSet == RegisterSpaceIsDescriptorSet::False)
+                    {
+                        registerSpaceIsDescriptorSet = RegisterSpaceIsDescriptorSet::Mixed;
+                    }
+                }
+                else
+                {
+                    if (registerSpaceIsDescriptorSet == RegisterSpaceIsDescriptorSet::Undetermined)
+                    {
+                        registerSpaceIsDescriptorSet = RegisterSpaceIsDescriptorSet::False;
+                    }
+                    else if (registerSpaceIsDescriptorSet == RegisterSpaceIsDescriptorSet::True)
+                    {
+                        registerSpaceIsDescriptorSet = RegisterSpaceIsDescriptorSet::Mixed;
+                    }
+                }
             }
+        }
+        if (registerSpaceIsDescriptorSet == RegisterSpaceIsDescriptorSet::Mixed)
+        {
+            error("Pipeline contains Binding layouts with differing values of `registerSpaceIsDescriptorSet`");
+            anyErrors = true;
         }
 
         if (pushConstantCount > 1)
@@ -1007,14 +1067,6 @@ namespace nvrhi::validation
                 return false;
             }
         }
-        else if (renderState.depthStencilState.depthTestEnable ||renderState.depthStencilState.stencilEnable)
-        {
-            if (!fbDesc.depthAttachment.isReadOnly)
-            {
-                warning("The depth-stencil state indicates read-only depth and stencil, "
-                    "but the framebuffer has a read-write depth attachment, which is suboptimal.");
-            }
-        }
 
         if (renderState.rasterState.conservativeRasterEnable && !m_Device->queryFeatureSupport(Feature::ConservativeRasterization))
         {
@@ -1041,7 +1093,7 @@ namespace nvrhi::validation
             }
         }
 
-        if (!validatePipelineBindingLayouts(pipelineDesc.bindingLayouts, shaders, m_Device->getGraphicsAPI()))
+        if (!validatePipelineBindingLayouts(pipelineDesc.bindingLayouts, shaders))
             return nullptr;
 
         if (!validateRenderState(pipelineDesc.renderState, fb))
@@ -1060,7 +1112,7 @@ namespace nvrhi::validation
 
         std::vector<IShader*> shaders = { pipelineDesc.CS };
         
-        if (!validatePipelineBindingLayouts(pipelineDesc.bindingLayouts, shaders, m_Device->getGraphicsAPI()))
+        if (!validatePipelineBindingLayouts(pipelineDesc.bindingLayouts, shaders))
             return nullptr;
 
         if (!validateShaderType(ShaderType::Compute, pipelineDesc.CS->getDesc(), "createComputePipeline"))
@@ -1085,7 +1137,7 @@ namespace nvrhi::validation
             }
         }
 
-        if (!validatePipelineBindingLayouts(pipelineDesc.bindingLayouts, shaders, m_Device->getGraphicsAPI()))
+        if (!validatePipelineBindingLayouts(pipelineDesc.bindingLayouts, shaders))
             return nullptr;
 
         if (!validateRenderState(pipelineDesc.renderState, fb))
@@ -1170,11 +1222,13 @@ namespace nvrhi::validation
             anyErrors = true;
         }
 
-        if (m_Device->getGraphicsAPI() != GraphicsAPI::D3D12)
+        const GraphicsAPI graphicsApi = m_Device->getGraphicsAPI();
+        if (!(graphicsApi == GraphicsAPI::D3D12 || (graphicsApi == GraphicsAPI::VULKAN && desc.registerSpaceIsDescriptorSet)))
         {
             if (desc.registerSpace != 0)
             {
-                errorStream << "Binding layout registerSpace = " << desc.registerSpace << ", which is unsupported by the current backend" << std::endl;
+                errorStream << "Binding layout registerSpace = " << desc.registerSpace << ", which is unsupported by the "
+                    << utils::GraphicsAPIToString(graphicsApi) << " backend" << std::endl;
                 anyErrors = true;
             }
         }
@@ -1862,9 +1916,9 @@ namespace nvrhi::validation
         m_Device->queueWaitForCommandList(waitQueue, executionQueue, instance);
     }
 
-    void DeviceWrapper::waitForIdle()
+    bool DeviceWrapper::waitForIdle()
     {
-        m_Device->waitForIdle();
+        return m_Device->waitForIdle();
     }
 
     void DeviceWrapper::runGarbageCollection()
@@ -1890,6 +1944,16 @@ namespace nvrhi::validation
     IMessageCallback* DeviceWrapper::getMessageCallback()
     {
         return m_MessageCallback;
+    }
+
+    bool DeviceWrapper::isAftermathEnabled()
+    {
+        return m_Device->isAftermathEnabled();
+    }
+
+    AftermathCrashDumpHelper& DeviceWrapper::getAftermathCrashDumpHelper()
+    {
+        return m_Device->getAftermathCrashDumpHelper();
     }
 
     void Range::add(uint32_t item)

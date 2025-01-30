@@ -23,7 +23,58 @@
 #pragma once
 
 #include <donut/app/DeviceManager.h>
+#include <donut/app/DeviceManager_DX11.h>
+#include <donut/app/DeviceManager_DX12.h>
+#if DONUT_WITH_VULKAN
+#include <donut/app/DeviceManager_VK.h>
+#endif
 
+#if DONUT_WITH_DX11
 donut::app::DeviceManager* CreateD3D11();
+class DeviceManagerOverride_DX11 : public DeviceManager_DX11
+{
+public:
+    DeviceManagerOverride_DX11();
+    IDXGIAdapter* GetAdapter();
+
+private:
+    bool CreateDevice() final;
+    bool CreateSwapChain() final;
+    void DestroyDeviceAndSwapChain() final;
+    bool BeginFrame() final;
+
+    bool                                        m_UseProxySwapchain = false;
+    nvrhi::RefCountPtr<ID3D11Device>            m_Device_native;
+    nvrhi::RefCountPtr<IDXGISwapChain>          m_SwapChain_native;
+};
+#endif
+
+#if DONUT_WITH_DX12
 donut::app::DeviceManager* CreateD3D12();
+class DeviceManagerOverride_DX12 : public DeviceManager_DX12
+{
+public:
+    DeviceManagerOverride_DX12();
+    IDXGIAdapter* GetAdapter();
+
+private:
+    bool CreateDevice() final;
+    bool CreateSwapChain() final;
+    void DestroyDeviceAndSwapChain() final;
+    bool BeginFrame() final;
+    void waitForQueue();
+
+    bool                                        m_UseProxySwapchain = false;
+    nvrhi::RefCountPtr<ID3D12Device>            m_Device_native;
+    nvrhi::RefCountPtr<IDXGISwapChain3>         m_SwapChain_native;
+};
+#endif
+
+#if DONUT_WITH_VULKAN
 donut::app::DeviceManager* CreateVK();
+class DeviceManagerOverride_VK : public DeviceManager_VK
+{
+public:
+    DeviceManagerOverride_VK();
+};
+#endif

@@ -26,6 +26,21 @@
 #include <donut/engine/CommonRenderPasses.h>
 #include <donut/engine/View.h>
 
+#if DONUT_WITH_STATIC_SHADERS
+#if DONUT_WITH_DX11
+#include "compiled_shaders/passes/motion_vectors_ps.dxbc.h"
+#include "compiled_shaders/passes/taa_cs.dxbc.h"
+#endif
+#if DONUT_WITH_DX12
+#include "compiled_shaders/passes/motion_vectors_ps.dxil.h"
+#include "compiled_shaders/passes/taa_cs.dxil.h"
+#endif
+#if DONUT_WITH_VULKAN
+#include "compiled_shaders/passes/motion_vectors_ps.spirv.h"
+#include "compiled_shaders/passes/taa_cs.spirv.h"
+#endif
+#endif
+
 using namespace donut::math;
 #include <donut/shaders/taa_cb.h>
 
@@ -81,12 +96,12 @@ TemporalAntiAliasingPass::TemporalAntiAliasingPass(
 
     std::vector<ShaderMacro> MotionVectorMacros;
     MotionVectorMacros.push_back(ShaderMacro("USE_STENCIL", useStencil ? "1" : "0"));
-    m_MotionVectorPS = shaderFactory->CreateShader("donut/passes/motion_vectors_ps.hlsl", "main", &MotionVectorMacros, nvrhi::ShaderType::Pixel);
+    m_MotionVectorPS = shaderFactory->CreateAutoShader("donut/passes/motion_vectors_ps.hlsl", "main", DONUT_MAKE_PLATFORM_SHADER(g_motion_vectors_ps), &MotionVectorMacros, nvrhi::ShaderType::Pixel);
     
     std::vector<ShaderMacro> ResolveMacros;
     ResolveMacros.push_back(ShaderMacro("SAMPLE_COUNT", std::to_string(unresolvedColorDesc.sampleCount)));
     ResolveMacros.push_back(ShaderMacro("USE_CATMULL_ROM_FILTER", params.useCatmullRomFilter ? "1" : "0"));
-    m_TemporalAntiAliasingCS = shaderFactory->CreateShader("donut/passes/taa_cs.hlsl", "main", &ResolveMacros, nvrhi::ShaderType::Compute);
+    m_TemporalAntiAliasingCS = shaderFactory->CreateAutoShader("donut/passes/taa_cs.hlsl", "main", DONUT_MAKE_PLATFORM_SHADER(g_taa_cs), &ResolveMacros, nvrhi::ShaderType::Compute);
 
     nvrhi::SamplerDesc samplerDesc;
     samplerDesc.addressU = samplerDesc.addressV = samplerDesc.addressW = nvrhi::SamplerAddressMode::Border;
@@ -158,6 +173,17 @@ TemporalAntiAliasingPass::TemporalAntiAliasingPass(
             nvrhi::BindingSetItem::Texture_UAV(0, params.resolvedColor),
             nvrhi::BindingSetItem::Texture_UAV(1, params.feedback2)
         };
+        
+        m_HasHistoryClampRelaxTexture = params.historyClampRelax != nullptr;
+        if (params.historyClampRelax != nullptr)
+        {
+            bindingSetDesc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(3, params.historyClampRelax));
+        }
+        else
+        {
+            // No relax mask, but we need to bind something to match the shader binding slots
+            bindingSetDesc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(3, params.unresolvedColor));
+        }
 
         nvrhi::utils::CreateBindingSetAndLayout(device, nvrhi::ShaderType::Compute, 0, bindingSetDesc, m_ResolveBindingLayout, m_ResolveBindingSet);
      
@@ -241,7 +267,6 @@ void TemporalAntiAliasingPass::TemporalResolve(
         const nvrhi::Viewport viewportOutput = viewOutput->GetViewportState().viewports[0];
         
         TemporalAntiAliasingConstants taaConstants = {};
-        const float marginSize = 1.f;
         taaConstants.inputViewOrigin = float2(viewportInput.minX, viewportInput.minY);
         taaConstants.inputViewSize = float2(viewportInput.width(), viewportInput.height());
         taaConstants.outputViewOrigin = float2(viewportOutput.minX, viewportOutput.minY);
@@ -254,6 +279,7 @@ void TemporalAntiAliasingPass::TemporalResolve(
         taaConstants.newFrameWeight = feedbackIsValid ? params.newFrameWeight : 1.f;
         taaConstants.pqC = dm::clamp(params.maxRadiance, 1e-4f, 1e8f);
         taaConstants.invPqC = 1.f / taaConstants.pqC;
+        taaConstants.useHistoryClampRelax = (params.useHistoryClampRelax && m_HasHistoryClampRelaxTexture) ? 1 : 0;
         commandList->writeBuffer(m_TemporalAntiAliasingCB, &taaConstants, sizeof(taaConstants));
 
         int2 viewportSize = int2(taaConstants.outputViewSize);

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+* Copyright (c) 2014-2024, NVIDIA CORPORATION. All rights reserved.
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -43,6 +43,18 @@ this software is released into the Public Domain.
 #include <json/value.h>
 
 #include "donut/engine/ShaderFactory.h"
+
+#if DONUT_WITH_STATIC_SHADERS
+#if DONUT_WITH_DX11
+#include "compiled_shaders/skinning_cs.dxbc.h"
+#endif
+#if DONUT_WITH_DX12
+#include "compiled_shaders/skinning_cs.dxil.h"
+#endif
+#if DONUT_WITH_VULKAN
+#include "compiled_shaders/skinning_cs.spirv.h"
+#endif
+#endif
 
 
 #ifdef DONUT_WITH_TASKFLOW
@@ -94,7 +106,7 @@ Scene::Scene(
     m_EnableBindlessResources = !!m_DescriptorTable;
     m_RayTracingSupported = m_Device->queryFeatureSupport(nvrhi::Feature::RayTracingAccelStruct);
 
-    m_SkinningShader = shaderFactory.CreateShader("donut/skinning_cs", "main", nullptr, nvrhi::ShaderType::Compute);
+    m_SkinningShader = shaderFactory.CreateAutoShader("donut/skinning_cs", "main", DONUT_MAKE_PLATFORM_SHADER(g_skinning_cs), nullptr, nvrhi::ShaderType::Compute);
 
     {
         nvrhi::BindingLayoutDesc layoutDesc;
@@ -373,8 +385,6 @@ void Scene::LoadSceneGraph(const Json::Value& nodeList, const std::shared_ptr<Sc
                 dst->GetName().c_str());
         }
     }
-
-    parent->ReverseChildren();
 }
 
 static dm::float4 ReadUpToFloat4(const Json::Value& node)
@@ -1123,10 +1133,14 @@ nvrhi::BufferHandle Scene::CreateGeometryBuffer()
 
 nvrhi::BufferHandle Scene::CreateInstanceBuffer()
 {
+    // On DX11, a buffer cannot be both structured and vertex.
+    // On other APIs, a structured instance buffer can be used for rasterization.
+    bool const needStructuredBuffer = m_Device->getGraphicsAPI() != nvrhi::GraphicsAPI::D3D11;
+
     nvrhi::BufferDesc bufferDesc;
     bufferDesc.byteSize = sizeof(InstanceData) * m_Resources->instanceData.size();
     bufferDesc.debugName = "Instances";
-    bufferDesc.structStride = m_EnableBindlessResources ? sizeof(InstanceData) : 0;
+    bufferDesc.structStride = needStructuredBuffer ? sizeof(InstanceData) : 0;
     bufferDesc.canHaveRawViews = true;
     bufferDesc.canHaveUAVs = true;
     bufferDesc.isVertexBuffer = true;
@@ -1197,7 +1211,7 @@ void Scene::UpdateGeometry(const std::shared_ptr<MeshInfo>& mesh)
             ? uint32_t(vertexOffset * sizeof(uint32_t) + mesh->buffers->getVertexBufferRange(VertexAttribute::Normal).byteOffset) : ~0u;
         gdata.tangentOffset = mesh->buffers->hasAttribute(VertexAttribute::Tangent)
             ? uint32_t(vertexOffset * sizeof(uint32_t) + mesh->buffers->getVertexBufferRange(VertexAttribute::Tangent).byteOffset) : ~0u;
-        gdata.materialIndex = geometry->material->materialID;
+        gdata.materialIndex = geometry->material ? geometry->material->materialID : ~0u;
     }
 }
 

@@ -80,6 +80,48 @@
 
 #include "DeviceManagerOverride/DeviceManagerOverride.h"
 
+sl::Extent UIData::getExtent(uint32_t fullWidth, uint32_t fullHeight, uint32_t uV)
+{
+    static const uint32_t B = 10; // boundary
+    sl::Extent e{}; // extent
+    switch (BackBufferExtents.size())
+    {
+    case 3:
+        switch (uV)
+        {
+        case 0:
+        case 1:
+            if (fullWidth / 2 > 3 * B / 2 && fullHeight / 2 > 3 * B / 2)
+            {
+                e.left = (uV == 0) ? B : fullWidth / 2 + B / 2;
+                e.top = B;
+                e.width = fullWidth / 2 - 3 * B / 2;
+                e.height = fullHeight / 2 - 3 * B / 2;
+            }
+            return e;
+        case 2:
+            if (fullHeight / 2 > B / 2)
+            {
+                e.left = B;
+                e.top = fullHeight / 2 + B / 2;
+                e.width = fullWidth - B - e.left;
+                e.height = fullHeight - B - e.top;
+            }
+            return e;
+        }
+        return e;
+    case 2:
+        e.left = uV * fullWidth / 2;
+        e.top = uV * fullHeight / 2;
+        e.width = (uV + 1) * fullWidth / 2 - e.left;
+        e.height = (uV + 1) * fullHeight / 2 - e.top;
+        return e;
+    default:
+        return BackBufferExtents[0];
+    }
+    return e;
+}
+
 std::ofstream log_file;
 void logToFile(donut::log::Severity s, char const* txt) {
     if (log_file.is_open()) {
@@ -134,7 +176,15 @@ bool ProcessCommandLine(int argc, const char* const* argv, donut::app::DeviceCre
         {
             sceneName = argv[i];
         }
-
+        else if (!_stricmp(argv[i], "-adapter"))
+        {
+            auto temp = std::string(argv[++i]);
+            deviceParams.adapterIndex = std::stoi(temp);
+        }
+        else
+        {
+            donut::log::warning("Unrecognized option: ", argv[i]);
+        }
     }
 
     return true;
@@ -144,15 +194,15 @@ donut::app::DeviceManager* CreateDeviceManager(nvrhi::GraphicsAPI api)
 {
     switch (api)
     {
-#if USE_DX11
+#if DONUT_WITH_DX11
     case nvrhi::GraphicsAPI::D3D11:
         return CreateD3D11();
 #endif
-#if USE_DX12
+#if DONUT_WITH_DX12
     case nvrhi::GraphicsAPI::D3D12:
         return CreateD3D12();
 #endif
-#if USE_VK
+#if DONUT_WITH_VULKAN
     case nvrhi::GraphicsAPI::VULKAN:
         return CreateVK();
 #endif
@@ -205,12 +255,6 @@ int main(int __argc, const char* const* __argv)
 
     // Initialise Streamline before creating the device and swapchain.
     auto success = SLWrapper::Get().Initialize_preDevice(api, checkSig, SLlog);
-
-#if USE_DX11 || USE_DX12
-    // We choose the best adapter that supports as many of our features as possible. This will be used for device creation.
-    if (api == nvrhi::GraphicsAPI::D3D11 || api == nvrhi::GraphicsAPI::D3D12)
-        SLWrapper::Get().FindAdapter((void*&) (deviceParams.adapter));
-#endif
 
     if (!success)
         return 0;

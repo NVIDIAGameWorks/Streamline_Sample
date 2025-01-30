@@ -30,6 +30,7 @@
 #include <utility>
 #include <functional>
 #include <filesystem>
+#include <stack>
 
 namespace donut::engine
 {
@@ -266,8 +267,7 @@ namespace donut::engine
         friend class SceneGraph;
         std::weak_ptr<SceneGraph> m_Graph;
         SceneGraphNode* m_Parent = nullptr;
-        std::shared_ptr<SceneGraphNode> m_FirstChild;
-        std::shared_ptr<SceneGraphNode> m_NextSibling;
+        std::vector<std::shared_ptr<SceneGraphNode>> m_Children;
         std::shared_ptr<SceneGraphLeaf> m_Leaf;
 
         std::string m_Name;
@@ -309,8 +309,8 @@ namespace donut::engine
         [[nodiscard]] SceneContentFlags GetSubgraphContentFlags() const { return m_SubgraphContent; }
 
         [[nodiscard]] SceneGraphNode* GetParent() const { return m_Parent; }
-        [[nodiscard]] SceneGraphNode* GetFirstChild() const { return m_FirstChild.get(); }
-        [[nodiscard]] SceneGraphNode* GetNextSibling() const { return m_NextSibling.get(); }
+        [[nodiscard]] SceneGraphNode* GetChild(size_t index) const { return (index < m_Children.size()) ? m_Children[index].get() : nullptr; }
+        [[nodiscard]] size_t GetNumChildren() const { return m_Children.size(); }
         [[nodiscard]] const std::shared_ptr<SceneGraphLeaf>& GetLeaf() const { return m_Leaf; }
 
         [[nodiscard]] const std::string& GetName() const { return m_Name; }
@@ -326,8 +326,6 @@ namespace donut::engine
         void SetTranslation(const dm::double3& translation);
         void SetLeaf(const std::shared_ptr<SceneGraphLeaf>& leaf);
         void SetName(const std::string& name);
-
-        void ReverseChildren();
 
         // Non-copyable and non-movable
         SceneGraphNode(const SceneGraphNode&) = delete;
@@ -362,6 +360,7 @@ namespace donut::engine
     private:
         SceneGraphNode* m_Current;
         SceneGraphNode* m_Scope;
+        std::stack<size_t> m_ChildIndices;
     public:
         SceneGraphWalker() = default;
 
@@ -511,7 +510,6 @@ namespace donut::engine
         [[nodiscard]] ConstIterator end() const { return ConstIterator(m_Map.cend()); }
         [[nodiscard]] bool empty() const { return m_Map.empty(); }
         [[nodiscard]] size_t size() const { return m_Map.size(); }
-        [[nodiscard]] const std::shared_ptr<T>& operator[](size_t i) { return m_Map[i].first; }
     };
 
     template<typename T>
@@ -558,11 +556,25 @@ namespace donut::engine
         [[nodiscard]] bool HasPendingStructureChanges() const { return m_Root && (m_Root->m_Dirty & SceneGraphNode::DirtyFlags::SubgraphStructure) != 0; }
         [[nodiscard]] bool HasPendingTransformChanges() const { return m_Root && (m_Root->m_Dirty & (SceneGraphNode::DirtyFlags::SubgraphTransforms | SceneGraphNode::DirtyFlags::SubgraphPrevTransforms)) != 0; }
 
+        // Replaces the current root node of the graph with the new one.
         std::shared_ptr<SceneGraphNode> SetRootNode(const std::shared_ptr<SceneGraphNode>& root);
+        
+        // Attaches a node and its subgraph to the parent.
+        // If the node is already attached to this or other graph, a deep copy of the subgraph is made first.
         std::shared_ptr<SceneGraphNode> Attach(const std::shared_ptr<SceneGraphNode>& parent, const std::shared_ptr<SceneGraphNode>& child);
+        
+        // Creates a node holding the provided leaf and attaches it to the parent.
         std::shared_ptr<SceneGraphNode> AttachLeafNode(const std::shared_ptr<SceneGraphNode>& parent, const std::shared_ptr<SceneGraphLeaf>& leaf);
-        std::shared_ptr<SceneGraphNode> Detach(const std::shared_ptr<SceneGraphNode>& node);
+        
+        // Removes the node and its subgraph from the graph.
+        // When preserveOrder is 'false', the order of node's siblings may be changed during this operation to improve performance.
+        std::shared_ptr<SceneGraphNode> Detach(const std::shared_ptr<SceneGraphNode>& node, bool preserveOrder = false);
 
+        // Finds a node whose path (sequence of nested node names) matches the provided path,
+        // relative to the 'context' node or the root if 'context' is NULL.
+        // If the path starts with / the search starts at the root, and the 'context' parameter is ignored.
+        // Parent references with .. are supported.
+        // If multiple nodes within one parent have the same name matching that component of the path, only the first node will be considered.
         [[nodiscard]] std::shared_ptr<SceneGraphNode> FindNode(const std::filesystem::path& path, SceneGraphNode* context = nullptr) const;
         
         void Refresh(uint32_t frameIndex);

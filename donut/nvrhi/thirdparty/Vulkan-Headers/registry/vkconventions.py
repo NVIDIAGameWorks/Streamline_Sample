@@ -1,6 +1,6 @@
-#!/usr/bin/python3 -i
+#!/usr/bin/env python3 -i
 #
-# Copyright 2013-2022 The Khronos Group Inc.
+# Copyright 2013-2024 The Khronos Group Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -50,9 +50,21 @@ class VulkanConventions(ConventionsBase):
         """Preferred spelling of NULL."""
         return '`NULL`'
 
+    def formatVersion(self, name, apivariant, major, minor):
+        """Mark up an API version name as a link in the spec."""
+        version = f'{major}.{minor}'
+        if apivariant == 'VKSC':
+            # Vulkan SC has a different anchor pattern for version appendices
+            if version == '1.0':
+                return 'Vulkan SC 1.0'
+            else:
+                return f'<<versions-sc-{version}, Vulkan SC Version {version}>>'
+        else:
+            return f'<<versions-{version}, Vulkan Version {version}>>'
+
     def formatExtension(self, name):
-        """Mark up an extension name as a link the spec."""
-        return '`apiext:{}`'.format(name)
+        """Mark up an extension name as a link in the spec."""
+        return f'apiext:{name}'
 
     @property
     def struct_macro(self):
@@ -107,8 +119,12 @@ class VulkanConventions(ConventionsBase):
         # The simple-minded rules need modification for some structure names
         subpats = [
             [ r'_H_(26[45])_',              r'_H\1_' ],
+            [ r'_AV_1_',                    r'_AV1_' ],
             [ r'_VULKAN_([0-9])([0-9])_',   r'_VULKAN_\1_\2_' ],
+            [ r'_VULKAN_SC_([0-9])([0-9])_',r'_VULKAN_SC_\1_\2_' ],
             [ r'_DIRECT_FB_',               r'_DIRECTFB_' ],
+            [ r'_VULKAN_SC_10',             r'_VULKAN_SC_1_0' ],
+
         ]
 
         for subpat in subpats:
@@ -169,7 +185,7 @@ class VulkanConventions(ConventionsBase):
         For Vulkan, these are names with a case-insensitive 'vk' prefix, or
         a 'PFN_vk' function pointer type prefix.
         """
-        return name[0:2].lower() == 'vk' or name[0:6] == 'PFN_vk'
+        return name[0:2].lower() == 'vk' or name.startswith('PFN_vk')
 
     def specURL(self, spectype='api'):
         """Return public registry URL which ref pages should link to for the
@@ -275,3 +291,21 @@ class VulkanConventions(ConventionsBase):
         """Return any extra text (following the title) for generated
            reference pages."""
         return 'include::{generated}/specattribs.adoc[]'
+
+
+class VulkanSCConventions(VulkanConventions):
+
+    def specURL(self, spectype='api'):
+        """Return public registry URL which ref pages should link to for the
+           current all-extensions HTML specification, so xrefs in the
+           asciidoc source that are not to ref pages can link into it
+           instead. N.b. this may need to change on a per-refpage basis if
+           there are multiple documents involved.
+        """
+        return 'https://registry.khronos.org/vulkansc/specs/1.0-extensions/html/vkspec.html'
+
+    @property
+    def xml_api_name(self):
+        """Return the name used in the default API XML registry for the default API"""
+        return 'vulkansc'
+

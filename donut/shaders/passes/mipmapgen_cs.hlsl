@@ -64,7 +64,7 @@ cbuffer c_MipMapgen : register(b0)
     MipmmapGenConstants g_MipMapGen;
 };
 
-#ifdef SPIRV
+#ifdef TARGET_VULKAN
 // Note: use an unsized array of UAVs on Vulkan to work around validation layer errors.
 // DXC maps this to an array of descriptors in one binding, like u0.0, u0.1, ... instead of u0, u1, ... which NVRHI doesn't support.
 // Using different bindings for array elements somehow works, and that's what NVRHI's BindingSets do, so just silence the validation layer by using dynamic array indexing.
@@ -83,7 +83,10 @@ groupshared VALUE_TYPE s_ReductionData[GROUP_SIZE][GROUP_SIZE];
     uint2 globalIdx : SV_DispatchThreadID,
     uint2 threadIdx : SV_GroupThreadID)
 {
-    VALUE_TYPE value = t_input.mips[0][globalIdx.xy];
+    uint texWidth, texHeight; 
+    t_input.GetDimensions(texWidth, texHeight);
+
+    VALUE_TYPE value = t_input.mips[0][min(globalIdx.xy, uint2(texWidth-1, texHeight-1))];
 
 #if MODE == MODE_MINMAX
     if (g_MipMapGen.dispatch==0)

@@ -81,6 +81,8 @@ struct ScriptingConfig {
     int Reflex_fpsCap = -1;
     int DLSSG_on = -1;
     int DeepDVC_on = -1;
+    int Latewarp_on = -1;
+    int GpuLoad = -1;
     sl::Extent viewportExtent{};
 
     ScriptingConfig(int argc, const char* const* argv)
@@ -120,6 +122,12 @@ struct ScriptingConfig {
             else if (!strcmp(argv[i], "-DeepDVC_on"))
             {
                 DeepDVC_on = 1;
+            }
+
+            // Latewarp
+            else if (!strcmp(argv[i], "-Latewarp_on"))
+            {
+                Latewarp_on = 1;
             }
 
             else if (!strcmp(argv[i], "-viewport"))
@@ -177,6 +185,7 @@ private:
 
     // UI
     UIData& m_ui;
+    donut::math::int2                               m_DLSS_Last_DisplaySize = { 0,0 };
     float3                                          m_AmbientTop = 0.f;
     float3                                          m_AmbientBottom = 0.f;
 
@@ -224,6 +233,8 @@ public:
     virtual bool MousePosUpdate(double xpos, double ypos) override;
     virtual bool MouseButtonUpdate(int button, int action, int mods) override;
     virtual bool MouseScrollUpdate(double xoffset, double yoffset) override;
+    virtual void SetLatewarpOptions() override;
+    virtual void Render(nvrhi::IFramebuffer* backBufferFramebuffer) override { RenderScene(backBufferFramebuffer); };
     virtual void Animate(float fElapsedTimeSeconds) override;
     virtual void SceneUnloading() override;
     virtual bool LoadScene(std::shared_ptr<IFileSystem> fs, const std::filesystem::path& fileName) override;
@@ -270,6 +281,8 @@ struct MultiViewportApp : public ApplicationBase
     {
         return m_pViewports[0]->m_pSample->MouseScrollUpdate(xoffset, yoffset);
     }
+    virtual void SetLatewarpOptions() override { getASample()->SetLatewarpOptions(); }
+    virtual void Render(nvrhi::IFramebuffer* frameBuffer) override { getASample()->Render(frameBuffer); }
     virtual void Animate(float fElapsedTimeSeconds) override
     {
         for (uint32_t uV = 0; uV < m_pViewports.size(); ++uV)

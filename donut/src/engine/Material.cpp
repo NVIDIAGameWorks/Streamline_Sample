@@ -59,8 +59,14 @@ namespace donut::engine
         if (transmissionTexture && enableTransmissionTexture)
             constants.flags |= MaterialFlags_UseTransmissionTexture;
 
+        if (opacityTexture && enableOpacityTexture)
+            constants.flags |= MaterialFlags_UseOpacityTexture;
+
         if (doubleSided)
             constants.flags |= MaterialFlags_DoubleSided;
+
+        if (metalnessInRedChannel)
+            constants.flags |= MaterialFlags_MetalnessInRedChannel;
 
         // free parameters
 
@@ -119,10 +125,10 @@ namespace donut::engine
         constants.emissiveTextureIndex = GetBindlessTextureIndex(emissiveTexture);
         constants.occlusionTextureIndex = GetBindlessTextureIndex(occlusionTexture);
         constants.transmissionTextureIndex = GetBindlessTextureIndex(transmissionTexture);
+        constants.opacityTextureIndex = GetBindlessTextureIndex(opacityTexture);
 
         constants.padding1 = 0;
         constants.padding2 = 0;
-        constants.padding3 = 0;
     }
 
     bool Material::SetProperty(const std::string& name, const dm::float4& value)
@@ -147,6 +153,7 @@ namespace donut::engine
         BOOL_PROPERTY(enableEmissiveTexture);
         BOOL_PROPERTY(enableOcclusionTexture);
         BOOL_PROPERTY(enableTransmissionTexture);
+        BOOL_PROPERTY(enableOpacityTexture);
 #undef FLOAT3_PROPERTY
 #undef FLOAT_PROPERTY
 #undef BOOL_PROPERTY

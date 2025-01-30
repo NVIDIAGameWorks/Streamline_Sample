@@ -1,15 +1,13 @@
-Submodule nvrhi contains modified content
-Submodule thirdparty/Vulkan-Headers contains modified content
 diff --git a/donut/nvrhi/thirdparty/Vulkan-Headers/include/vulkan/vulkan.hpp b/donut/nvrhi/thirdparty/Vulkan-Headers/include/vulkan/vulkan.hpp
-index 61e4955..3751cb9 100644
+index e20d00f..87392ed 100644
 --- a/donut/nvrhi/thirdparty/Vulkan-Headers/include/vulkan/vulkan.hpp
 +++ b/donut/nvrhi/thirdparty/Vulkan-Headers/include/vulkan/vulkan.hpp
-@@ -7345,7 +7345,7 @@ namespace VULKAN_HPP_NAMESPACE
+@@ -17482,7 +17482,7 @@ namespace VULKAN_HPP_NAMESPACE
+         else
+         {
+ #  if defined( _WIN32 )
+-          m_library = ::LoadLibraryA( "vulkan-1.dll" );
++          m_library = ::LoadLibraryA( "sl.interposer.dll" );
  #  elif defined( __APPLE__ )
-         m_library = dlopen( "libvulkan.dylib", RTLD_NOW | RTLD_LOCAL );
- #  elif defined( _WIN32 )
--        m_library = ::LoadLibraryA( "vulkan-1.dll" );
-+        m_library = ::LoadLibraryA( "sl.interposer.dll" );
- #  else
- #    error unsupported platform
- #  endif
+           m_library = dlopen( "libvulkan.dylib", RTLD_NOW | RTLD_LOCAL );
+           if ( !m_library )

@@ -59,8 +59,6 @@ struct static_vector : private std::array<T, _max_elements>
         assert(size <= max_elements);
     }
 
-    static_vector(const static_vector& other) = default;
-
     static_vector(std::initializer_list<T> il)
         : current_size(0)
     {
@@ -138,12 +136,12 @@ struct static_vector : private std::array<T, _max_elements>
         if (current_size > new_size)
         {
             for (size_type i = new_size; i < current_size; i++)
-                (data() + i)->~T();
+                *(data() + i) = T{};
         }
         else
         {
             for (size_type i = current_size; i < new_size; i++)
-                new (data() + i) T();
+                *(data() + i) = T{};
         }
 
         current_size = new_size;

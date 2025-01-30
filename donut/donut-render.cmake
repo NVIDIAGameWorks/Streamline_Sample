@@ -32,16 +32,8 @@ target_link_libraries(donut_render donut_core donut_engine)
 
 add_dependencies(donut_render donut_shaders)
 
-if(DONUT_WITH_DX11)
-target_compile_definitions(donut_render PUBLIC USE_DX11=1)
-endif()
-
-if(DONUT_WITH_DX12)
-target_compile_definitions(donut_render PUBLIC USE_DX12=1)
-endif()
-
-if(DONUT_WITH_VULKAN)
-target_compile_definitions(donut_render PUBLIC USE_VK=1)
-endif()
-
 set_target_properties(donut_render PROPERTIES FOLDER Donut)
+
+if (DONUT_WITH_STATIC_SHADERS)
+    target_include_directories(donut_render PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/shaders")
+endif()

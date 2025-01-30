@@ -28,14 +28,34 @@ set (CMAKE_CXX_STANDARD_REQUIRED ON)
 set (CMAKE_C_STANDARD 99)
 
 if (MSVC)
-    set (CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif ()
+    if (NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+        set (CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+
+    # Test the Windows SDK version to make sure that we can compile ShaderMake.
+    # ShaderMake uses some relatively new APIs for DXC, and there's no straightforward way to test
+    # if they're declared in the SDK headers. So, test it here to prevent obscure errors.
+    set(_MIN_WINDOWS_SDK_VERSION_BUILD 20348)
+    string(REGEX MATCH "^10\\.0\\.([0-9]+)\\.[0-9]+$" _WINDOWS_SDK_VERSION "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+    if (_WINDOWS_SDK_VERSION)
+        set(_WINDOWS_SDK_VERSION_BUILD "${CMAKE_MATCH_1}")
+        if (_WINDOWS_SDK_VERSION_BUILD LESS _MIN_WINDOWS_SDK_VERSION_BUILD)
+            message(SEND_ERROR "ShaderMake requires Windows SDK version at least 10.0.${_MIN_WINDOWS_SDK_VERSION_BUILD}.0.")
+        endif()
+    else()
+        message(WARNING "ShaderMake: Unknown Windows SDK version '${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}', errors may occur during build.")
+    endif()
+endif()
 
 # Compile options
+if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
+  set (SIMD -msse4.1)
+endif ()
+
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set (COMPILE_OPTIONS -msse4.1 -Wextra)
+    set (COMPILE_OPTIONS ${SIMD} -Wextra)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    set (COMPILE_OPTIONS -msse4.1 -Wextra)
+    set (COMPILE_OPTIONS ${SIMD} -Wextra)
 elseif (MSVC)
     set (COMPILE_OPTIONS /W4 /WX /wd4324)
 else ()
@@ -49,7 +69,10 @@ add_library (ShaderMakeBlob STATIC
 )
 target_include_directories (ShaderMakeBlob PUBLIC "include")
 target_compile_options (ShaderMakeBlob PRIVATE ${COMPILE_OPTIONS})
-set_property (TARGET ShaderMakeBlob PROPERTY FOLDER ShaderMake)
+set_target_properties (ShaderMakeBlob PROPERTIES 
+    FOLDER ShaderMake
+    POSITION_INDEPENDENT_CODE ON
+)
 
 # ShaderMake executable
 add_executable (ShaderMake
@@ -58,7 +81,13 @@ add_executable (ShaderMake
     src/ShaderMake.cpp 
 )
 target_compile_options (ShaderMake PRIVATE ${COMPILE_OPTIONS})
-set_target_properties (ShaderMake PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SHADERMAKE_BIN_OUTPUT_PATH}/$<CONFIG>")
+set_target_properties (ShaderMake PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY                "${SHADERMAKE_BIN_OUTPUT_PATH}/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG          "${SHADERMAKE_BIN_OUTPUT_PATH}/Debug"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     "${SHADERMAKE_BIN_OUTPUT_PATH}/MinSizeRel"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE        "${SHADERMAKE_BIN_OUTPUT_PATH}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${SHADERMAKE_BIN_OUTPUT_PATH}/RelWithDebInfo"
+)
 set_property (DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ShaderMake)
 set_property (TARGET ShaderMake PROPERTY FOLDER ShaderMake)
 target_link_libraries (ShaderMake ShaderMakeBlob)
@@ -67,6 +96,8 @@ if (MSVC)
     target_compile_definitions (ShaderMake PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
     target_link_options (ShaderMake PRIVATE "/DELAYLOAD:dxcompiler.dll")
     target_link_libraries (ShaderMake d3dcompiler dxcompiler delayimp)
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_link_libraries (ShaderMake pthread)
 else ()
     target_link_libraries (ShaderMake stdc++fs pthread)
 endif ()

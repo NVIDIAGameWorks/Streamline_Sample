@@ -32,10 +32,11 @@ Required options:
 - `-p, --platform=<str>` - DXBC, DXIL or SPIRV
 - `-c, --config=<str>` - Configuration file with the list of shaders to compile
 - `-o, --out=<str>` - Output directory
-- `--binary` - Output native binary files
-- `--header` - Output header files
-- `--blob` - Output shader blob files
-- `--compiler=<str>` - Path to a specific FXC/DXC compiler
+- `-b, --binary` - Output binary files
+- `-h, --header` - Output header files
+- `-B, --binaryBlob` - Output binary blob files
+- `-H, --headerBlob` - Output header blob files
+- `--compiler=<str>` - Path to a FXC/DXC/Slang compiler
 
 Compiler settings:
 - `-m, --shaderModel=<str>` - Shader model for DXIL/SPIRV (always SM 5.0 for DXBC)
@@ -45,6 +46,10 @@ Compiler settings:
 - `--PDB` - Output PDB files in `out/PDB/` folder
 - `--stripReflection` - Maps to `-Qstrip_reflect` DXC/FXC option: strip reflection information from a shader binary
 - `--matrixRowMajor` - Maps to `-Zpr` DXC/FXC option: pack matrices in row-major order
+- `--hlsl2021` - Maps to `-HV 2021` DXC option: enable HLSL 2021 standard
+- `--slang` - Use Slang for compilation, requires `--compiler` to specify a path to `slangc` executable
+- `--slangHLSL` - Use HLSL compatibility mode when compiler is Slang
+- `-X, --compilerOptions=<str>` - Custom command line options for the compiler, separated by spaces
 
 Defines & include directories:
 - `-I, --include=<str>` - Include directory(s)
@@ -104,7 +109,7 @@ Additionally, the config file parser supports:
 
 ## Shader blob API
 
-When the `--blob` command line argument is specified, ShaderMake will package multiple permutations for the same shader into a single "blob" file. These files use a custom format that is somewhat similar to regular TAR. 
+When the `--blob` command line argument is specified, ShaderMake will package multiple permutations for the same shader into a single "blob" file. These files use a custom format that is somewhat similar to regular TAR.
 
 ShaderMake provides a small library with parsing functions to use these blob files in applications. This library can be statically linked with an application by including ShaderMake as a git submodule and linking the `ShaderMakeBlob` target to your application:
 

@@ -51,16 +51,16 @@ namespace nvrhi::d3d12
         a = GetNormalizedResourceType(a);
         b = GetNormalizedResourceType(b);
 
-        if (a == ResourceType::TypedBuffer_SRV && b == ResourceType::Texture_SRV ||
-            b == ResourceType::TypedBuffer_SRV && a == ResourceType::Texture_SRV ||
-            a == ResourceType::TypedBuffer_SRV && b == ResourceType::RayTracingAccelStruct ||
-            a == ResourceType::Texture_SRV && b == ResourceType::RayTracingAccelStruct ||
-            b == ResourceType::TypedBuffer_SRV && a == ResourceType::RayTracingAccelStruct ||
-            b == ResourceType::Texture_SRV && a == ResourceType::RayTracingAccelStruct)
+        if ((a == ResourceType::TypedBuffer_SRV && b == ResourceType::Texture_SRV) ||
+            (b == ResourceType::TypedBuffer_SRV && a == ResourceType::Texture_SRV) ||
+            (a == ResourceType::TypedBuffer_SRV && b == ResourceType::RayTracingAccelStruct) ||
+            (a == ResourceType::Texture_SRV && b == ResourceType::RayTracingAccelStruct) ||
+            (b == ResourceType::TypedBuffer_SRV && a == ResourceType::RayTracingAccelStruct) ||
+            (b == ResourceType::Texture_SRV && a == ResourceType::RayTracingAccelStruct))
             return true;
 
-        if (a == ResourceType::TypedBuffer_UAV && b == ResourceType::Texture_UAV ||
-            b == ResourceType::TypedBuffer_UAV && a == ResourceType::Texture_UAV)
+        if ((a == ResourceType::TypedBuffer_UAV && b == ResourceType::Texture_UAV) ||
+            (b == ResourceType::TypedBuffer_UAV && a == ResourceType::Texture_UAV))
             return true;
 
         return false;
@@ -285,6 +285,19 @@ namespace nvrhi::d3d12
                             found = true;
                             break;
                         }
+                        else if (range.RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_UAV && bindingType == ResourceType::SamplerFeedbackTexture_UAV)
+                        {
+                            SamplerFeedbackTexture* texture = checked_cast<SamplerFeedbackTexture*>(binding.resourceHandle);
+
+                            texture->createUAV(descriptorHandle.ptr);
+                            pResource = texture;
+
+                            // TODO: Automatic state transition into Unordered Access here
+
+                            hasUavBindings = true;
+                            found = true;
+                            break;
+                        }
                     }
 
                     if (pResource)
@@ -440,6 +453,7 @@ namespace nvrhi::d3d12
                     case ResourceType::TypedBuffer_UAV:
                     case ResourceType::StructuredBuffer_UAV:
                     case ResourceType::RawBuffer_UAV:
+                    case ResourceType::SamplerFeedbackTexture_UAV:
                         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
                         break;
 
@@ -582,6 +596,7 @@ namespace nvrhi::d3d12
             case ResourceType::TypedBuffer_UAV:
             case ResourceType::StructuredBuffer_UAV:
             case ResourceType::RawBuffer_UAV:
+            case ResourceType::SamplerFeedbackTexture_UAV:
                 rangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
                 break;
 
@@ -768,6 +783,11 @@ namespace nvrhi::d3d12
         case ResourceType::Texture_UAV: {
             Texture* texture = checked_cast<Texture*>(binding.resourceHandle);
             texture->createUAV(descriptorHandle.ptr, binding.format, binding.dimension, binding.subresources);
+            break;
+        }
+        case ResourceType::SamplerFeedbackTexture_UAV: {
+            SamplerFeedbackTexture* texture = checked_cast<SamplerFeedbackTexture*>(binding.resourceHandle);
+            texture->createUAV(descriptorHandle.ptr);
             break;
         }
         case ResourceType::TypedBuffer_SRV:

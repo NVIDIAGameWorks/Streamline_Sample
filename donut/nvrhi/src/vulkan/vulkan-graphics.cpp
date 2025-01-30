@@ -98,7 +98,7 @@ namespace nvrhi::vulkan
 
             TextureDimension dimension = getDimensionForFramebuffer(t->desc.dimension, subresources.numArraySlices > 1);
 
-            const auto& view = t->getSubresourceView(subresources, dimension, rt.format);
+            const auto& view = t->getSubresourceView(subresources, dimension, rt.format, vk::ImageUsageFlagBits::eColorAttachment);
             attachmentViews[i] = view.view;
 
             fb->resources.push_back(rt.texture);
@@ -141,7 +141,7 @@ namespace nvrhi::vulkan
 
             TextureDimension dimension = getDimensionForFramebuffer(texture->desc.dimension, subresources.numArraySlices > 1);
 
-            const auto& view = texture->getSubresourceView(subresources, dimension, att.format);
+            const auto& view = texture->getSubresourceView(subresources, dimension, att.format, vk::ImageUsageFlagBits::eDepthStencilAttachment);
             attachmentViews.push_back(view.view);
 
             fb->resources.push_back(att.texture);
@@ -182,7 +182,7 @@ namespace nvrhi::vulkan
             TextureSubresourceSet subresources = vrsAttachment.subresources.resolve(vrsTexture->desc, true);
             TextureDimension dimension = getDimensionForFramebuffer(vrsTexture->desc.dimension, subresources.numArraySlices > 1);
 
-            const auto& view = vrsTexture->getSubresourceView(subresources, dimension, vrsAttachment.format);
+            const auto& view = vrsTexture->getSubresourceView(subresources, dimension, vrsAttachment.format, vk::ImageUsageFlagBits::eFragmentShadingRateAttachmentKHR);
             attachmentViews.push_back(view.view);
 
             fb->resources.push_back(vrsAttachment.texture);
@@ -371,12 +371,6 @@ namespace nvrhi::vulkan
         GraphicsPipeline *pso = new GraphicsPipeline(m_Context);
         pso->desc = desc;
         pso->framebufferInfo = fb->framebufferInfo;
-        
-        for (const BindingLayoutHandle& _layout : desc.bindingLayouts)
-        {
-            BindingLayout* layout = checked_cast<BindingLayout*>(_layout.Get());
-            pso->pipelineBindingLayouts.push_back(layout);
-        }
 
         Shader* VS = checked_cast<Shader*>(desc.VS.Get());
         Shader* HS = checked_cast<Shader*>(desc.HS.Get());
@@ -505,43 +499,13 @@ namespace nvrhi::vulkan
             .setCombinerOps(combiners)
             .setFragmentSize(convertFragmentShadingRate(desc.shadingRateState.shadingRate));
 
-        BindingVector<vk::DescriptorSetLayout> descriptorSetLayouts;
-        uint32_t pushConstantSize = 0;
-        pso->pushConstantVisibility = vk::ShaderStageFlagBits();
-        for (const BindingLayoutHandle& _layout : desc.bindingLayouts)
-        {
-            BindingLayout* layout = checked_cast<BindingLayout*>(_layout.Get());
-            descriptorSetLayouts.push_back(layout->descriptorSetLayout);
-
-            if (!layout->isBindless)
-            {
-                for (const BindingLayoutItem& item : layout->desc.bindings)
-                {
-                    if (item.type == ResourceType::PushConstants)
-                    {
-                        pushConstantSize = item.size;
-                        pso->pushConstantVisibility = convertShaderTypeToShaderStageFlagBits(layout->desc.visibility);
-                        // assume there's only one push constant item in all layouts -- the validation layer makes sure of that
-                        break;
-                    }
-                }
-            }
-        }
-
-        auto pushConstantRange = vk::PushConstantRange()
-            .setOffset(0)
-            .setSize(pushConstantSize)
-            .setStageFlags(pso->pushConstantVisibility);
-
-        auto pipelineLayoutInfo = vk::PipelineLayoutCreateInfo()
-                                    .setSetLayoutCount(uint32_t(descriptorSetLayouts.size()))
-                                    .setPSetLayouts(descriptorSetLayouts.data())
-                                    .setPushConstantRangeCount(pushConstantSize ? 1 : 0)
-                                    .setPPushConstantRanges(&pushConstantRange);
-
-        res = m_Context.device.createPipelineLayout(&pipelineLayoutInfo,
-                                                  m_Context.allocationCallbacks,
-                                                  &pso->pipelineLayout);
+        res = createPipelineLayout(
+            pso->pipelineLayout,
+            pso->pipelineBindingLayouts,
+            pso->pushConstantVisibility,
+            pso->descriptorSetIdxToBindingIdx,
+            m_Context,
+            desc.bindingLayouts);
         CHECK_VK_FAIL(res)
 
         attachment_vector<vk::PipelineColorBlendAttachmentState> colorBlendAttachments(fb->desc.colorAttachments.size());
@@ -557,16 +521,20 @@ namespace nvrhi::vulkan
 
         pso->usesBlendConstants = blendState.usesConstantColor(uint32_t(fb->desc.colorAttachments.size()));
 
-        vk::DynamicState dynamicStates[4] = {
+        static_vector<vk::DynamicState, 5> dynamicStates = {
             vk::DynamicState::eViewport,
-            vk::DynamicState::eScissor,
-            vk::DynamicState::eBlendConstants,
-            vk::DynamicState::eFragmentShadingRateKHR
+            vk::DynamicState::eScissor
         };
+        if (pso->usesBlendConstants)
+            dynamicStates.push_back(vk::DynamicState::eBlendConstants);
+        if (pso->desc.renderState.depthStencilState.dynamicStencilRef)
+            dynamicStates.push_back(vk::DynamicState::eStencilReference);
+        if (pso->desc.shadingRateState.enabled)
+            dynamicStates.push_back(vk::DynamicState::eFragmentShadingRateKHR);
 
         auto dynamicStateInfo = vk::PipelineDynamicStateCreateInfo()
-            .setDynamicStateCount(pso->usesBlendConstants ? 3 : 2)
-            .setPDynamicStates(dynamicStates);
+            .setDynamicStateCount(uint32_t(dynamicStates.size()))
+            .setPDynamicStates(dynamicStates.data());
 
         auto pipelineInfo = vk::GraphicsPipelineCreateInfo()
             .setStageCount(uint32_t(shaderStages.size()))
@@ -584,8 +552,10 @@ namespace nvrhi::vulkan
             .setSubpass(0)
             .setBasePipelineHandle(nullptr)
             .setBasePipelineIndex(-1)
-            .setPTessellationState(nullptr)
-            .setPNext(&shadingRateState);
+            .setPTessellationState(nullptr);
+
+        if (pso->desc.shadingRateState.enabled)
+            pipelineInfo.setPNext(&shadingRateState);
 
         auto tessellationState = vk::PipelineTessellationStateCreateInfo();
 
@@ -704,7 +674,7 @@ namespace nvrhi::vulkan
 
         if (arraysAreDifferent(m_CurrentComputeState.bindings, state.bindings) || m_AnyVolatileBufferWrites)
         {
-            bindBindingSets(vk::PipelineBindPoint::eGraphics, pso->pipelineLayout, state.bindings);
+            bindBindingSets(vk::PipelineBindPoint::eGraphics, pso->pipelineLayout, state.bindings, pso->descriptorSetIdxToBindingIdx);
         }
 
         if (!state.viewport.viewports.empty() && arraysAreDifferent(state.viewport.viewports, m_CurrentGraphicsState.viewport.viewports))
@@ -728,6 +698,11 @@ namespace nvrhi::vulkan
             }
 
             m_CurrentCmdBuf->cmdBuf.setScissor(0, uint32_t(scissors.size()), scissors.data());
+        }
+
+        if (pso->desc.renderState.depthStencilState.dynamicStencilRef && (updatePipeline || m_CurrentGraphicsState.dynamicStencilRefValue != state.dynamicStencilRefValue))
+        {
+            m_CurrentCmdBuf->cmdBuf.setStencilReference(vk::StencilFaceFlagBits::eFrontAndBack, state.dynamicStencilRefValue);
         }
 
         if (pso->usesBlendConstants && (updatePipeline || m_CurrentGraphicsState.blendConstantColor != state.blendConstantColor))
@@ -792,7 +767,7 @@ namespace nvrhi::vulkan
         {
             GraphicsPipeline* pso = checked_cast<GraphicsPipeline*>(m_CurrentGraphicsState.pipeline);
 
-            bindBindingSets(vk::PipelineBindPoint::eGraphics, pso->pipelineLayout, m_CurrentGraphicsState.bindings);
+            bindBindingSets(vk::PipelineBindPoint::eGraphics, pso->pipelineLayout, m_CurrentGraphicsState.bindings, pso->descriptorSetIdxToBindingIdx);
 
             m_AnyVolatileBufferWrites = false;
         }

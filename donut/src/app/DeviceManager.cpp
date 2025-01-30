@@ -57,11 +57,11 @@ freely, subject to the following restrictions:
 #include <thread>
 #include <sstream>
 
-#if USE_DX11
+#if DONUT_WITH_DX11
 #include <d3d11.h>
 #endif
 
-#if USE_DX12
+#if DONUT_WITH_DX12
 #include <d3d12.h>
 #endif
 
@@ -212,6 +212,41 @@ static const struct
     { nvrhi::Format::RGBA32_FLOAT,      32, 32, 32, 32,  0,  0, },
 };
 
+bool DeviceManager::CreateInstance(const InstanceParameters& params)
+{
+    if (m_InstanceCreated)
+        return true;
+
+    static_cast<InstanceParameters&>(m_DeviceParams) = params;
+
+    if (!params.headlessDevice)
+    {
+        if (!glfwInit())
+            return false;
+    }
+
+#if DONUT_WITH_AFTERMATH
+    if (params.enableAftermath)
+    {
+        m_AftermathCrashDumper.EnableCrashDumpTracking();
+    }
+#endif
+
+    m_InstanceCreated = CreateInstanceInternal();
+    return m_InstanceCreated;
+}
+
+bool DeviceManager::CreateHeadlessDevice(const DeviceCreationParameters& params)
+{
+    m_DeviceParams = params;
+    m_DeviceParams.headlessDevice = true;
+
+    if (!CreateInstance(m_DeviceParams))
+        return false;
+
+    return CreateDevice();
+}
+
 bool DeviceManager::CreateWindowDeviceAndSwapChain(const DeviceCreationParameters& params, const char *windowTitle)
 {
 #ifdef _WINDOWS
@@ -219,18 +254,18 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain(const DeviceCreationParameter
     {
         // this needs to happen before glfwInit in order to override GLFW behavior
         SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
-    } else {
+    }
+    else {
         SetProcessDpiAwareness(PROCESS_DPI_UNAWARE);
     }
 #endif
 
-    if (!glfwInit())
-    {
-        return false;
-    }
-
-    this->m_DeviceParams = params;
+    m_DeviceParams = params;
+    m_DeviceParams.headlessDevice = false;
     m_RequestedVSync = params.vsyncEnabled;
+
+    if (!CreateInstance(m_DeviceParams))
+        return false;
 
     glfwSetErrorCallback(ErrorCallback_GLFW);
 
@@ -309,13 +344,16 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain(const DeviceCreationParameter
     glfwSetCursorPosCallback(m_Window, MousePosCallback_GLFW);
     glfwSetMouseButtonCallback(m_Window, MouseButtonCallback_GLFW);
     glfwSetScrollCallback(m_Window, MouseScrollCallback_GLFW);
-	  glfwSetJoystickCallback(JoystickConnectionCallback_GLFW);
+    glfwSetJoystickCallback(JoystickConnectionCallback_GLFW);
 
-	  // If there are multiple device managers, then this would be called by each one which isn't necessary
-	  // but should not hurt.
-	  JoyStickManager::Singleton().EnumerateJoysticks();
+    // If there are multiple device managers, then this would be called by each one which isn't necessary
+    // but should not hurt.
+    JoyStickManager::Singleton().EnumerateJoysticks();
 
-    if (!CreateDeviceAndSwapChain())
+    if (!CreateDevice())
+        return false;
+
+    if (!CreateSwapChain())
         return false;
 
     glfwShowWindow(m_Window);
@@ -391,13 +429,12 @@ void DeviceManager::Animate(double elapsedTime)
     for(auto it : m_vRenderPasses)
     {
         it->Animate(float(elapsedTime));
+        it->SetLatewarpOptions();
     }
 }
 
 void DeviceManager::Render()
-{
-    BeginFrame();
-    
+{    
     nvrhi::IFramebuffer* framebuffer = m_SwapChainFramebuffers[GetCurrentBackBufferIndex()];
 
     for (auto it : m_vRenderPasses)
@@ -419,24 +456,50 @@ void DeviceManager::UpdateAverageFrameTime(double elapsedTime)
     }
 }
 
+bool DeviceManager::ShouldRenderUnfocused() const
+{
+    for (auto it = m_vRenderPasses.crbegin(); it != m_vRenderPasses.crend(); it++)
+    {
+        bool ret = (*it)->ShouldRenderUnfocused();
+        if (ret)
+            return true;
+    }
+
+    return false;
+}
+
 void DeviceManager::RunMessageLoop()
 {
     m_PreviousFrameTimestamp = glfwGetTime();
 
+#if DONUT_WITH_AFTERMATH
+    bool dumpingCrash = false;
+#endif
     while(!glfwWindowShouldClose(m_Window))
     {
-
-        if (m_callbacks.beforeFrame) m_callbacks.beforeFrame(*this);
-
+        if (m_callbacks.beforeFrame) m_callbacks.beforeFrame(*this, m_FrameIndex);
         glfwPollEvents();
         UpdateWindowSize();
-        AnimateRenderPresent();
+        bool presentSuccess = AnimateRenderPresent();
+        if (!presentSuccess)
+        {
+#if DONUT_WITH_AFTERMATH
+            dumpingCrash = true;
+#endif
+            break;
+        }
     }
 
-    GetDevice()->waitForIdle();
+    bool waitSuccess = GetDevice()->waitForIdle();
+#if DONUT_WITH_AFTERMATH
+    dumpingCrash |= !waitSuccess;
+    // wait for Aftermath dump to complete before exiting application
+    if (dumpingCrash && m_DeviceParams.enableAftermath)
+        AftermathCrashDump::WaitForCrashDump();
+#endif
 }
 
-void DeviceManager::AnimateRenderPresent()
+bool DeviceManager::AnimateRenderPresent()
 {
     double curTime = glfwGetTime();
     double elapsedTime = curTime - m_PreviousFrameTimestamp;
@@ -444,17 +507,39 @@ void DeviceManager::AnimateRenderPresent()
 	JoyStickManager::Singleton().EraseDisconnectedJoysticks();
 	JoyStickManager::Singleton().UpdateAllJoysticks(m_vRenderPasses);
 
-    if (m_windowVisible)
+    if (m_windowVisible && (m_windowIsInFocus || ShouldRenderUnfocused()))
     {
-        if (m_callbacks.beforeAnimate) m_callbacks.beforeAnimate(*this);
+        if (m_callbacks.beforeAnimate) m_callbacks.beforeAnimate(*this, m_FrameIndex);
         Animate(elapsedTime);
-        if (m_callbacks.afterAnimate) m_callbacks.afterAnimate(*this);
-        if (m_callbacks.beforeRender) m_callbacks.beforeRender(*this);
-        Render();
-        if (m_callbacks.afterRender) m_callbacks.afterRender(*this);
-        if (m_callbacks.beforePresent) m_callbacks.beforePresent(*this);
-        Present();
-        if (m_callbacks.afterPresent) m_callbacks.afterPresent(*this);
+        if (m_callbacks.afterAnimate) m_callbacks.afterAnimate(*this, m_FrameIndex);
+
+        // normal rendering           : A0    R0 P0 A1 R1 P1
+        // m_SkipRenderOnFirstFrame on: A0 A1 R0 P0 A2 R1 P1
+        // m_SkipRenderOnFirstFrame simulates multi-threaded rendering frame indices, m_FrameIndex becomes the simulation index
+        // while the local variable below becomes the render/present index, which will be different only if m_SkipRenderOnFirstFrame is set
+        if (m_FrameIndex > 0 || !m_SkipRenderOnFirstFrame)
+        {
+            if (BeginFrame())
+            {
+                // first time entering this loop, m_FrameIndex is 1 for m_SkipRenderOnFirstFrame, 0 otherwise;
+                uint32_t frameIndex = m_FrameIndex;
+                if (m_SkipRenderOnFirstFrame)
+                {
+                    frameIndex--;
+                }
+
+                if (m_callbacks.beforeRender) m_callbacks.beforeRender(*this, frameIndex);
+                Render();
+                if (m_callbacks.afterRender) m_callbacks.afterRender(*this, frameIndex);
+                if (m_callbacks.beforePresent) m_callbacks.beforePresent(*this, frameIndex);
+                bool presentSuccess = Present();
+                if (m_callbacks.afterPresent) m_callbacks.afterPresent(*this, frameIndex);
+                if (!presentSuccess)
+                {
+                    return false;
+                }
+            }
+        }
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(0));
@@ -465,6 +550,7 @@ void DeviceManager::AnimateRenderPresent()
     m_PreviousFrameTimestamp = curTime;
 
     ++m_FrameIndex;
+    return true;
 }
 
 void DeviceManager::GetWindowDimensions(int& width, int& height)
@@ -476,6 +562,13 @@ void DeviceManager::GetWindowDimensions(int& width, int& height)
 const DeviceCreationParameters& DeviceManager::GetDeviceParams()
 {
     return m_DeviceParams;
+}
+
+donut::app::DeviceManager::DeviceManager()
+#if DONUT_WITH_AFTERMATH
+    : m_AftermathCrashDumper(*this)
+#endif
+{
 }
 
 void DeviceManager::UpdateWindowSize()
@@ -492,6 +585,8 @@ void DeviceManager::UpdateWindowSize()
     }
 
     m_windowVisible = true;
+
+    m_windowIsInFocus = glfwGetWindowAttrib(m_Window, GLFW_FOCUSED) == 1;
 
     if (int(m_DeviceParams.backBufferWidth) != width || 
         int(m_DeviceParams.backBufferHeight) != height ||
@@ -530,7 +625,7 @@ void DeviceManager::WindowPosCallback(int x, int y)
 #endif    
     if (m_EnableRenderDuringWindowMovement && m_SwapChainFramebuffers.size() > 0)
     {
-        if (m_callbacks.beforeFrame) m_callbacks.beforeFrame(*this);
+        if (m_callbacks.beforeFrame) m_callbacks.beforeFrame(*this, m_FrameIndex);
         AnimateRenderPresent();
     }
 }
@@ -699,6 +794,8 @@ void DeviceManager::Shutdown()
     }
 
     glfwTerminate();
+
+    m_InstanceCreated = false;
 }
 
 nvrhi::IFramebuffer* donut::app::DeviceManager::GetCurrentFramebuffer()
@@ -725,7 +822,7 @@ void DeviceManager::SetWindowTitle(const char* title)
     m_WindowTitle = title;
 }
 
-void DeviceManager::SetInformativeWindowTitle(const char* applicationName, const char* extraInfo)
+void DeviceManager::SetInformativeWindowTitle(const char* applicationName, bool includeFramerate, const char* extraInfo)
 {
     std::stringstream ss;
     ss << applicationName;
@@ -747,9 +844,11 @@ void DeviceManager::SetInformativeWindowTitle(const char* applicationName, const
     ss << ")";
 
     double frameTime = GetAverageFrameTimeSeconds();
-    if (frameTime > 0)
+    if (includeFramerate && frameTime > 0)
     {
-        ss << " - " << std::setprecision(4) << (1.0 / frameTime) << " FPS ";
+        double const fps = 1.0 / frameTime;
+        int const precision = (fps <= 20.0) ? 1 : 0;
+        ss << " - " << std::fixed << std::setprecision(precision) << fps << " FPS ";
     }
 
     if (extraInfo)
@@ -758,19 +857,24 @@ void DeviceManager::SetInformativeWindowTitle(const char* applicationName, const
     SetWindowTitle(ss.str().c_str());
 }
 
+const char* donut::app::DeviceManager::GetWindowTitle()
+{
+    return m_WindowTitle.c_str();
+}
+
 donut::app::DeviceManager* donut::app::DeviceManager::Create(nvrhi::GraphicsAPI api)
 {
     switch (api)
     {
-#if USE_DX11
+#if DONUT_WITH_DX11
     case nvrhi::GraphicsAPI::D3D11:
         return CreateD3D11();
 #endif
-#if USE_DX12
+#if DONUT_WITH_DX12
     case nvrhi::GraphicsAPI::D3D12:
         return CreateD3D12();
 #endif
-#if USE_VK
+#if DONUT_WITH_VULKAN
     case nvrhi::GraphicsAPI::VULKAN:
         return CreateVK();
 #endif

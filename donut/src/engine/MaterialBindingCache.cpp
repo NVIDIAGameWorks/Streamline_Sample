@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+* Copyright (c) 2014-2024, NVIDIA CORPORATION. All rights reserved.
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -29,12 +29,12 @@ MaterialBindingCache::MaterialBindingCache(
     nvrhi::IDevice* device, 
     nvrhi::ShaderType shaderType, 
     uint32_t registerSpace,
+    bool registerSpaceIsDescriptorSet,
     const std::vector<MaterialResourceBinding>& bindings,
     nvrhi::ISampler* sampler,
     nvrhi::ITexture* fallbackTexture,
     bool trackLiveness)
     : m_Device(device)
-    , m_ShaderType(shaderType)
     , m_BindingDesc(bindings)
     , m_FallbackTexture(fallbackTexture)
     , m_Sampler(sampler)
@@ -43,6 +43,7 @@ MaterialBindingCache::MaterialBindingCache(
     nvrhi::BindingLayoutDesc layoutDesc;
     layoutDesc.visibility = shaderType;
     layoutDesc.registerSpace = registerSpace;
+    layoutDesc.registerSpaceIsDescriptorSet = registerSpaceIsDescriptorSet;
 
     for (const auto& item : bindings)
     {
@@ -60,6 +61,7 @@ MaterialBindingCache::MaterialBindingCache(
         case MaterialResource::EmissiveTexture:
         case MaterialResource::OcclusionTexture:
         case MaterialResource::TransmissionTexture:
+        case MaterialResource::OpacityTexture:
             layoutItem.type = nvrhi::ResourceType::Texture_SRV;
             break;
         case MaterialResource::Sampler:
@@ -152,6 +154,10 @@ nvrhi::BindingSetHandle donut::engine::MaterialBindingCache::CreateMaterialBindi
 
         case MaterialResource::TransmissionTexture:
             setItem = GetTextureBindingSetItem(item.slot, material->transmissionTexture);
+            break;
+
+        case MaterialResource::OpacityTexture:
+            setItem = GetTextureBindingSetItem(item.slot, material->opacityTexture);
             break;
 
         default:

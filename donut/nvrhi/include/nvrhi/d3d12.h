@@ -56,6 +56,10 @@ namespace nvrhi::d3d12
 
         virtual void updateGraphicsVolatileBuffers() = 0;
         virtual void updateComputeVolatileBuffers() = 0;
+
+        virtual void clearSamplerFeedbackTexture(ISamplerFeedbackTexture* texture) = 0;
+        virtual void decodeSamplerFeedbackTexture(IBuffer* buffer, ISamplerFeedbackTexture* texture, nvrhi::Format format) = 0;
+        virtual void setSamplerFeedbackTextureState(ISamplerFeedbackTexture* texture, ResourceStates stateBits) = 0;
     };
 
     typedef RefCountPtr<ICommandList> CommandListHandle;
@@ -88,7 +92,7 @@ namespace nvrhi::d3d12
     {
         RenderTargetView,
         DepthStencilView,
-        ShaderResrouceView,
+        ShaderResourceView,
         Sampler
     };
 
@@ -100,6 +104,8 @@ namespace nvrhi::d3d12
         virtual GraphicsPipelineHandle createHandleForNativeGraphicsPipeline(IRootSignature* rootSignature, ID3D12PipelineState* pipelineState, const GraphicsPipelineDesc& desc, const FramebufferInfo& framebufferInfo) = 0;
         virtual MeshletPipelineHandle createHandleForNativeMeshletPipeline(IRootSignature* rootSignature, ID3D12PipelineState* pipelineState, const MeshletPipelineDesc& desc, const FramebufferInfo& framebufferInfo) = 0;
         [[nodiscard]] virtual IDescriptorHeap* getDescriptorHeap(DescriptorHeapType heapType) = 0;
+        virtual SamplerFeedbackTextureHandle createSamplerFeedbackTexture(ITexture* pairedTexture, const SamplerFeedbackTextureDesc& desc) = 0;
+        virtual SamplerFeedbackTextureHandle createSamplerFeedbackForNativeTexture(ObjectType objectType, Object texture, ITexture* pairedTexture) = 0;
     };
 
     typedef RefCountPtr<IDevice> DeviceHandle;
@@ -117,6 +123,7 @@ namespace nvrhi::d3d12
         uint32_t shaderResourceViewHeapSize = 16384;
         uint32_t samplerHeapSize = 1024;
         uint32_t maxTimerQueries = 256;
+        bool aftermathEnabled = false;
     };
 
     NVRHI_API DeviceHandle createDevice(const DeviceDesc& desc);

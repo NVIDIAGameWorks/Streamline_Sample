@@ -39,7 +39,6 @@
 #include <donut/render/GBuffer.h>
 #include <nvrhi/nvrhi.h>
 #include <nvrhi/common/misc.h>
-#include <sl.h>
 
 
 /// <summary>

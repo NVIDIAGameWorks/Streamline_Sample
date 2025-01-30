@@ -62,7 +62,7 @@ namespace nvrhi
 {
     // Version of the public API provided by NVRHI.
     // Increment this when any changes to the API are made.
-    static constexpr uint32_t c_HeaderVersion = 12;
+    static constexpr uint32_t c_HeaderVersion = 14;
 
     // Verifies that the version of the implementation matches the version of the header.
     // Returns true if they match. Use this when initializing apps using NVRHI as a shared library.
@@ -421,6 +421,7 @@ namespace nvrhi
         // and memory is bound to the texture later using bindTextureMemory.
         // On DX12, the texture resource is created at the time of memory binding.
         bool isVirtual = false;
+        bool isTiled = false;
 
         Color clearValue;
         bool useClearValue = false;
@@ -450,6 +451,7 @@ namespace nvrhi
         constexpr TextureDesc& setUseClearValue(bool value) { useClearValue = value; return *this; }
         constexpr TextureDesc& setInitialState(ResourceStates value) { initialState = value; return *this; }
         constexpr TextureDesc& setKeepInitialState(bool value) { keepInitialState = value; return *this; }
+        constexpr TextureDesc& setSharedResourceFlags(SharedResourceFlags value) { sharedResourceFlags = value; return *this; }
     };
 
     // describes a 2D section of a single mip level + single slice of a texture
@@ -540,6 +542,79 @@ namespace nvrhi
     };
     typedef RefCountPtr<IStagingTexture> StagingTextureHandle;
 
+    struct TiledTextureCoordinate
+    {
+        uint16_t mipLevel = 0;
+        uint16_t arrayLevel = 0;
+        uint32_t x = 0;
+        uint32_t y = 0;
+        uint32_t z = 0;
+    };
+
+    struct TiledTextureRegion
+    {
+        uint32_t tilesNum = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t depth = 0;
+    };
+
+    struct TextureTilesMapping
+    {
+        TiledTextureCoordinate* tiledTextureCoordinates = nullptr;
+        TiledTextureRegion* tiledTextureRegions = nullptr;
+        uint64_t* byteOffsets = nullptr;
+        uint32_t numTextureRegions = 0;
+        IHeap* heap = nullptr;
+    };
+
+    struct PackedMipDesc
+    {
+        uint32_t numStandardMips = 0;
+        uint32_t numPackedMips = 0;
+        uint32_t numTilesForPackedMips = 0;
+        uint32_t startTileIndexInOverallResource = 0;
+    };
+    
+    struct TileShape
+    {
+        uint32_t widthInTexels = 0;
+        uint32_t heightInTexels = 0;
+        uint32_t depthInTexels = 0;
+    };
+
+    struct SubresourceTiling
+    {
+        uint32_t widthInTiles = 0;
+        uint32_t heightInTiles = 0;
+        uint32_t depthInTiles = 0;
+        uint32_t startTileIndexInOverallResource = 0;
+    };
+
+    enum SamplerFeedbackFormat : uint8_t
+    {
+        MinMipOpaque = 0x0,
+        MipRegionUsedOpaque = 0x1,
+    };
+
+    struct SamplerFeedbackTextureDesc
+    {
+        SamplerFeedbackFormat samplerFeedbackFormat = SamplerFeedbackFormat::MinMipOpaque;
+        uint32_t samplerFeedbackMipRegionX = 0;
+        uint32_t samplerFeedbackMipRegionY = 0;
+        uint32_t samplerFeedbackMipRegionZ = 0;
+        ResourceStates initialState = ResourceStates::Unknown;
+        bool keepInitialState = false;
+    };
+
+    class ISamplerFeedbackTexture : public IResource
+    {
+    public:
+        [[nodiscard]] virtual const SamplerFeedbackTextureDesc& getDesc() const = 0;
+        virtual TextureHandle getPairedTexture() = 0;
+    };
+    typedef RefCountPtr<ISamplerFeedbackTexture> SamplerFeedbackTextureHandle;
+
     //////////////////////////////////////////////////////////////////////////
     // Input Layout
     //////////////////////////////////////////////////////////////////////////
@@ -599,7 +674,7 @@ namespace nvrhi
         bool isVolatile = false;
 
         // Indicates that the buffer is created with no backing memory,
-        // and memory is bound to the texture later using bindBufferMemory.
+        // and memory is bound to the buffer later using bindBufferMemory.
         // On DX12, the buffer resource is created at the time of memory binding.
         bool isVirtual = false;
 
@@ -1054,6 +1129,7 @@ namespace nvrhi
         uint8_t         stencilReadMask = 0xff;
         uint8_t         stencilWriteMask = 0xff;
         uint8_t         stencilRefValue = 0;
+        bool            dynamicStencilRef = false;
         StencilOpDesc   frontFaceStencil;
         StencilOpDesc   backFaceStencil;
 
@@ -1072,6 +1148,8 @@ namespace nvrhi
         constexpr DepthStencilState& setStencilRefValue(uint8_t value) { stencilRefValue = value; return *this; }
         constexpr DepthStencilState& setFrontFaceStencil(const StencilOpDesc& value) { frontFaceStencil = value; return *this; }
         constexpr DepthStencilState& setBackFaceStencil(const StencilOpDesc& value) { backFaceStencil = value; return *this; }
+        constexpr DepthStencilState& setDynamicStencilRef(bool value) { dynamicStencilRef = value; return *this; }
+        
     };
 
     //////////////////////////////////////////////////////////////////////////
@@ -1556,6 +1634,7 @@ namespace nvrhi
         Sampler,
         RayTracingAccelStruct,
         PushConstants,
+        SamplerFeedbackTexture_UAV,
 
         Count
     };
@@ -1597,6 +1676,7 @@ namespace nvrhi
         NVRHI_BINDING_LAYOUT_ITEM_INITIALIZER(VolatileConstantBuffer)
         NVRHI_BINDING_LAYOUT_ITEM_INITIALIZER(Sampler)
         NVRHI_BINDING_LAYOUT_ITEM_INITIALIZER(RayTracingAccelStruct)
+        NVRHI_BINDING_LAYOUT_ITEM_INITIALIZER(SamplerFeedbackTexture_UAV)
 
         static BindingLayoutItem PushConstants(const uint32_t slot, const size_t size)
         {
@@ -1631,12 +1711,31 @@ namespace nvrhi
     struct BindingLayoutDesc
     {
         ShaderType visibility = ShaderType::None;
+
+        // In DX12, this controls the register space of the bindings
+        // In Vulkan, DXC maps register spaces to descriptor sets by default, so this can be used to
+        // determine the descriptor set index for the binding layout.
+        // In order to use this behaviour, you must set `registerSpaceIsDescriptorSet` to true.  See below.
         uint32_t registerSpace = 0;
+
+        // This flag controls the behavior for pipelines that use multiple binding layouts.
+        // It must be set to the same value for _all_ of the binding layouts in a pipeline.
+        // - When it's set to `false`, the `registerSpace` parameter only affects the DX12 implementation,
+        //   and the validation layer will report an error when non-zero `registerSpace` is used with other APIs.
+        // - When it's set to `true` the parameter also affects the Vulkan implementation, allowing any
+        //   layout to occupy any register space or descriptor set, regardless of their order in the pipeline.
+        //   However, a consequence of DXC mapping the descriptor set index to register space is that you may
+        //   not have more than one `BindingLayout` using the same `registerSpace` value in the same pipeline.
+        // - When it's set to different values for the layouts in a pipeline, the validation layer will report
+        //   an error.
+        bool registerSpaceIsDescriptorSet = false;
+
         BindingLayoutItemArray bindings;
         VulkanBindingOffsets bindingOffsets;
 
         BindingLayoutDesc& setVisibility(ShaderType value) { visibility = value; return *this; }
         BindingLayoutDesc& setRegisterSpace(uint32_t value) { registerSpace = value; return *this; }
+        BindingLayoutDesc& setRegisterSpaceIsDescriptorSet(bool value) { registerSpaceIsDescriptorSet = value; return *this; }
         BindingLayoutDesc& addItem(const BindingLayoutItem& value) { bindings.push_back(value); return *this; }
         BindingLayoutDesc& setBindingOffsets(const VulkanBindingOffsets& value) { bindingOffsets = value; return *this; }
     };
@@ -1891,6 +1990,19 @@ namespace nvrhi
             result.dimension = TextureDimension::Unknown;
             result.range.byteOffset = 0;
             result.range.byteSize = byteSize;
+            result.unused = 0;
+            return result;
+        }
+
+        static BindingSetItem SamplerFeedbackTexture_UAV(uint32_t slot, ISamplerFeedbackTexture* texture)
+        {
+            BindingSetItem result;
+            result.slot = slot;
+            result.type = ResourceType::SamplerFeedbackTexture_UAV;
+            result.resourceHandle = texture;
+            result.format = Format::UNKNOWN;
+            result.dimension = TextureDimension::Unknown;
+            result.subresources = AllSubresources;
             result.unused = 0;
             return result;
         }
@@ -2202,8 +2314,9 @@ namespace nvrhi
         IGraphicsPipeline* pipeline = nullptr;
         IFramebuffer* framebuffer = nullptr;
         ViewportState viewport;
-        Color blendConstantColor{};
         VariableRateShadingState shadingRateState;
+        Color blendConstantColor{};
+        uint8_t dynamicStencilRefValue = 0;
 
         BindingSetVector bindings;
 
@@ -2215,7 +2328,9 @@ namespace nvrhi
         GraphicsState& setPipeline(IGraphicsPipeline* value) { pipeline = value; return *this; }
         GraphicsState& setFramebuffer(IFramebuffer* value) { framebuffer = value; return *this; }
         GraphicsState& setViewport(const ViewportState& value) { viewport = value; return *this; }
+        GraphicsState& setShadingRateState(const VariableRateShadingState& value) { shadingRateState = value; return *this; }
         GraphicsState& setBlendColor(const Color& value) { blendConstantColor = value; return *this; }
+        GraphicsState& setDynamicStencilRefValue(uint8_t value) { dynamicStencilRefValue = value; return *this; }
         GraphicsState& addBindingSet(IBindingSet* value) { bindings.push_back(value); return *this; }
         GraphicsState& addVertexBuffer(const VertexBufferBinding& value) { vertexBuffers.push_back(value); return *this; }
         GraphicsState& setIndexBuffer(const IndexBufferBinding& value) { indexBuffer = value; return *this; }
@@ -2284,6 +2399,7 @@ namespace nvrhi
         IFramebuffer* framebuffer = nullptr;
         ViewportState viewport;
         Color blendConstantColor{};
+        uint8_t dynamicStencilRefValue = 0;
 
         BindingSetVector bindings;
 
@@ -2295,6 +2411,7 @@ namespace nvrhi
         MeshletState& setBlendColor(const Color& value) { blendConstantColor = value; return *this; }
         MeshletState& addBindingSet(IBindingSet* value) { bindings.push_back(value); return *this; }
         MeshletState& setIndirectParams(IBuffer* value) { indirectParams = value; return *this; }
+        MeshletState& setDynamicStencilRefValue(uint8_t value) { dynamicStencilRefValue = value; return *this; }
     };
 
     //////////////////////////////////////////////////////////////////////////
@@ -2607,6 +2724,8 @@ namespace nvrhi
     // IDevice
     //////////////////////////////////////////////////////////////////////////
 
+    class AftermathCrashDumpHelper;
+
     class IDevice : public IResource
     {
     public:
@@ -2621,6 +2740,9 @@ namespace nvrhi
         virtual StagingTextureHandle createStagingTexture(const TextureDesc& d, CpuAccessMode cpuAccess) = 0;
         virtual void *mapStagingTexture(IStagingTexture* tex, const TextureSlice& slice, CpuAccessMode cpuAccess, size_t *outRowPitch) = 0;
         virtual void unmapStagingTexture(IStagingTexture* tex) = 0;
+
+        virtual void getTextureTiling(ITexture* texture, uint32_t* numTiles, PackedMipDesc* desc, TileShape* tileShape, uint32_t* subresourceTilingsNum, SubresourceTiling* subresourceTilings) = 0;
+        virtual void updateTextureTileMappings(ITexture* texture, const TextureTilesMapping* tileMappings, uint32_t numTileMappings, CommandQueue executionQueue = CommandQueue::Graphics) = 0;
 
         virtual BufferHandle createBuffer(const BufferDesc& d) = 0;
         virtual void *mapBuffer(IBuffer* buffer, CpuAccessMode cpuAccess) = 0;
@@ -2683,7 +2805,8 @@ namespace nvrhi
         virtual CommandListHandle createCommandList(const CommandListParameters& params = CommandListParameters()) = 0;
         virtual uint64_t executeCommandLists(ICommandList* const* pCommandLists, size_t numCommandLists, CommandQueue executionQueue = CommandQueue::Graphics) = 0;
         virtual void queueWaitForCommandList(CommandQueue waitQueue, CommandQueue executionQueue, uint64_t instance) = 0;
-        virtual void waitForIdle() = 0;
+        // returns true if the wait completes successfully, false if detecting a problem (e.g. device removal)
+        virtual bool waitForIdle() = 0;
 
         // Releases the resources that were referenced in the command lists that have finished executing.
         // IMPORTANT: Call this method at least once per frame.
@@ -2696,6 +2819,9 @@ namespace nvrhi
         virtual Object getNativeQueue(ObjectType objectType, CommandQueue queue) = 0;
 
         virtual IMessageCallback* getMessageCallback() = 0;
+
+        virtual bool isAftermathEnabled() = 0;
+        virtual AftermathCrashDumpHelper& getAftermathCrashDumpHelper() = 0;
 
         // Front-end for executeCommandLists(..., 1) for compatibility and convenience
         uint64_t executeCommandList(ICommandList* commandList, CommandQueue executionQueue = CommandQueue::Graphics)

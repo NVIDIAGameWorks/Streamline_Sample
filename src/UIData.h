@@ -41,11 +41,6 @@
 #include <donut/render/ToneMappingPasses.h>
 #include <nvrhi/nvrhi.h>
 
-// Streamline
-#include<sl.h>
-#include<sl_dlss.h>
-#include<sl_dlss_g.h>
-
 /// <summary>
 /// This enum describes the available anti-aliasing modes. These can be toggled from the UI
 /// </summary>
@@ -77,7 +72,13 @@ struct UIData
     donut::math::int2                   Resolution = { 0,0 };
     bool                                Resolution_changed = false;
     bool                                MouseOverUI = false;
+
+    uint32_t getNViewports() const { return (uint32_t)BackBufferExtents.size(); }
+    sl::Extent getExtent(uint32_t fullWidth, uint32_t fullHeight, uint32_t uV);
+private:
+    friend class UIRenderer;
     std::vector<sl::Extent>             BackBufferExtents{};
+public:
 
     // SSAO
     bool                                EnableSsao = true;
@@ -112,7 +113,6 @@ struct UIData
     sl::DLSSMode                        DLSS_Mode = sl::DLSSMode::eOff;
     RenderingResolutionMode             DLSS_Resolution_Mode = RenderingResolutionMode::FIXED;
     bool                                DLSS_Dynamic_Res_change = true;
-    donut::math::int2                   DLSS_Last_DisplaySize = { 0,0 };
     AntiAliasingMode                    DLSS_Last_AA = AntiAliasingMode::NONE;
     bool                                DLSS_DebugShowFullRenderingBuffer = false;
     bool                                DLSS_lodbias_useoveride = false;
@@ -164,17 +164,23 @@ struct UIData
     // LATENCY specific parameters
     bool                                REFLEX_Supported = false;
     bool                                REFLEX_LowLatencyAvailable = false;
-    int                                 REFLEX_Mode = sl::ReflexMode::eOff;
+    int                                 REFLEX_Mode = static_cast<int>(sl::ReflexMode::eOff);
     int                                 REFLEX_CapedFPS = 0;
     std::string                         REFLEX_Stats = "";
 
     // DLFG specific parameters
     bool                                DLSSG_Supported = false;
     sl::DLSSGMode                       DLSSG_mode = sl::DLSSGMode::eOff;
+    int                                 DLSSG_numFrames = 2;
+    int                                 DLSSG_numFramesMaxMultiplier = 4;
     float                               DLSSG_fps = 0;
     size_t                              DLSSG_memory = 0;
     std::string                         DLSSG_status = "";
     bool                                DLSSG_cleanup_needed = false;
+
+    // Latewarp
+    bool                                Latewarp_Supported = false;
+    int                                 Latewarp_active = 0;
 
 };
 
