@@ -130,7 +130,7 @@ void logToFile(donut::log::Severity s, char const* txt) {
     }
 };
 
-bool ProcessCommandLine(int argc, const char* const* argv, donut::app::DeviceCreationParameters& deviceParams, std::string& sceneName, bool& checkSig, bool& enableSLlog)
+bool ProcessCommandLine(int argc, const char* const* argv, donut::app::DeviceCreationParameters& deviceParams, std::string& sceneName, bool& checkSig, bool& enableSLlog, bool& useNewSLSetTagAPI, bool& allowSMSCG)
 {
     for (int i = 1; i < argc; i++)
     {
@@ -180,6 +180,14 @@ bool ProcessCommandLine(int argc, const char* const* argv, donut::app::DeviceCre
         {
             auto temp = std::string(argv[++i]);
             deviceParams.adapterIndex = std::stoi(temp);
+        }
+        else if (!_stricmp(argv[i], "-useLegacySetTagAPI"))
+        {
+            useNewSLSetTagAPI = false;
+        }
+        else if (!_stricmp(argv[i], "-allowSMSCG"))
+        {
+            allowSMSCG = true;
         }
         else
         {
@@ -241,7 +249,9 @@ int main(int __argc, const char* const* __argv)
     std::string sceneName;
     bool checkSig = true;
     bool SLlog = false;
-    if (!ProcessCommandLine(__argc, __argv, deviceParams, sceneName, checkSig, SLlog))
+    bool useNewSLSetTagAPI = true;
+    bool allowSMSCG = false;
+    if (!ProcessCommandLine(__argc, __argv, deviceParams, sceneName, checkSig, SLlog, useNewSLSetTagAPI, allowSMSCG))
     {
         donut::log::error("Failed to process the command line.");
         return 1;
@@ -253,8 +263,9 @@ int main(int __argc, const char* const* __argv)
     checkSig = false;
 #endif
 
+    SLWrapper::Get().SetSLOptions(checkSig, SLlog, useNewSLSetTagAPI, allowSMSCG);
     // Initialise Streamline before creating the device and swapchain.
-    auto success = SLWrapper::Get().Initialize_preDevice(api, checkSig, SLlog);
+    auto success = SLWrapper::Get().Initialize_preDevice(api);
 
     if (!success)
         return 0;

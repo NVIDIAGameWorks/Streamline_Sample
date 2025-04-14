@@ -69,7 +69,6 @@ using namespace donut::app;
 
 DeviceManagerOverride_VK::DeviceManagerOverride_VK()
 {
-    m_SkipRenderOnFirstFrame = true;
 }
 
 DeviceManager* CreateVK()

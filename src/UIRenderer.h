@@ -97,6 +97,10 @@ public:
 
     }
 
+    virtual bool ShouldRenderUnfocused() override
+    { 
+        return true; 
+    }
 protected:
     virtual void buildUI(void) override
     {
@@ -461,6 +465,7 @@ protected:
                     {sl::DLSSPreset::ePresetE, "Preset E##Presets"},
                     {sl::DLSSPreset::ePresetF, "Preset F##Presets"},
                     {sl::DLSSPreset::ePresetJ, "Preset J##Presets"},
+                    {sl::DLSSPreset::ePresetK, "Preset K##Presets"},
                 };
 
                 if (ImGui::CollapsingHeader("Presets")) {

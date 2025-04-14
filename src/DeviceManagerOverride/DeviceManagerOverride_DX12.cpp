@@ -75,7 +75,6 @@ using namespace donut::app;
 
 DeviceManagerOverride_DX12::DeviceManagerOverride_DX12()
 {
-    m_SkipRenderOnFirstFrame = true;
 }
 
 IDXGIAdapter* DeviceManagerOverride_DX12::GetAdapter()

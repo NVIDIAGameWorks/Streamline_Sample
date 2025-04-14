@@ -56,6 +56,8 @@
 
 #include "sl_security.h"
 
+#include "DeviceManagerOverride/DeviceManagerOverride.h"
+
 #ifndef _WIN32
 #include <unistd.h>
 #include <cstdio>
@@ -158,7 +160,15 @@ SLWrapper& SLWrapper::Get() {
     return instance;
 }
 
-bool SLWrapper::Initialize_preDevice(nvrhi::GraphicsAPI api, const bool& checkSig, const bool& SLlog)
+void SLWrapper::SetSLOptions(const bool checkSig, const bool enableLog, const bool useNewSetTagAPI, const bool allowSMSCG)
+{
+    m_SLOptions.checkSig = checkSig;
+    m_SLOptions.enableLog = enableLog;
+    m_SLOptions.useNewSetTagAPI = useNewSetTagAPI;
+    m_SLOptions.allowSMSCG = allowSMSCG;
+}
+
+bool SLWrapper::Initialize_preDevice(nvrhi::GraphicsAPI api)
 {
 
     if (m_sl_initialised) {
@@ -181,7 +191,7 @@ bool SLWrapper::Initialize_preDevice(nvrhi::GraphicsAPI api, const bool& checkSi
     pref.logMessageCallback = &logFunctionCallback;
     pref.logLevel = sl::LogLevel::eDefault;
 #else
-    if (SLlog) {
+    if (m_SLOptions.enableLog) {
         pref.showConsole = true;
         pref.logMessageCallback = &logFunctionCallback;
         pref.logLevel = sl::LogLevel::eDefault;
@@ -229,11 +239,15 @@ bool SLWrapper::Initialize_preDevice(nvrhi::GraphicsAPI api, const bool& checkSi
     }
 
     pref.flags |= sl::PreferenceFlags::eUseManualHooking;
+    if (m_SLOptions.useNewSetTagAPI)
+    {
+        pref.flags |= sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+    }
 
     auto pathDll = GetSlInterposerDllLocation();
 
     HMODULE interposer = {};
-    if (checkSig && sl::security::verifyEmbeddedSignature(pathDll.c_str())) {
+    if (m_SLOptions.checkSig && sl::security::verifyEmbeddedSignature(pathDll.c_str())) {
         interposer = LoadLibraryW(pathDll.c_str());
     }
     else {
@@ -355,8 +369,13 @@ void SLWrapper::UpdateFeatureAvailable(donut::app::DeviceManager* deviceManager)
 
 #if DONUT_WITH_DX11
     if (m_api == nvrhi::GraphicsAPI::D3D11) {
-        adapterInfo.deviceLUID = (uint8_t*) &m_d3d11Luid;
-        adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
+        auto device = static_cast<DeviceManagerOverride_DX11*>(deviceManager);
+        DXGI_ADAPTER_DESC desc;
+        if (SUCCEEDED(device->GetAdapter()->GetDesc(&desc)))
+        {
+            adapterInfo.deviceLUID = (uint8_t*)&desc.AdapterLuid;
+            adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
+        }
     }
 #endif
 #if DONUT_WITH_DX12
@@ -442,7 +461,7 @@ void SLWrapper::Shutdown()
         sl::ResourceTag{nullptr, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent},
         sl::ResourceTag{nullptr, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent},
         sl::ResourceTag{nullptr, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent} };
-    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), nullptr), "slSetTag_clear");
+    successCheck(SetTag(inputs, _countof(inputs), nullptr), "slSetTag_clear");
 
     // Shutdown Streamline
     if (m_sl_initialised) {
@@ -600,6 +619,13 @@ void SLWrapper::SetDLSSGOptions(const sl::DLSSGOptions consts) {
     }
 
     m_dlssg_consts = consts;
+    if (m_SLOptions.allowSMSCG)
+    {
+        if (m_Device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
+        {
+            m_dlssg_consts.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockNoClientQueues;
+        }
+    }
 
     successCheck(slDLSSGSetOptions(m_viewport, m_dlssg_consts), "slDLSSGSetOptions");
 }
@@ -934,7 +960,7 @@ void SLWrapper::TagResources_General(
     sl::ResourceTag finalColorHudlessResourceTag = sl::ResourceTag{ &finalColorHudlessResource, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
     sl::ResourceTag inputs[] = {motionVectorsResourceTag, depthResourceTag, finalColorHudlessResourceTag };
-    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), cmdbuffer), "slSetTag_General");
+    successCheck(SetTag(inputs, _countof(inputs), cmdbuffer), "slSetTag_General");
 
 }
 
@@ -961,7 +987,7 @@ void SLWrapper::TagResources_DLSS_NIS(
     sl::ResourceTag outputResourceTag = sl::ResourceTag{ &outputResource, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
     sl::ResourceTag inputs[] = { inputResourceTag, outputResourceTag };
-    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), cmdbuffer), "slSetTag_dlss_nis");
+    successCheck(SetTag(inputs, _countof(inputs), cmdbuffer), "slSetTag_dlss_nis");
 
 }
 
@@ -981,7 +1007,7 @@ void SLWrapper::TagResources_DLSS_FG(
     // If the viewport extent is invalid - set extent to null. This informs streamline that full resource extent needs to be used
     sl::ResourceTag backBufferResourceTag = sl::ResourceTag{ nullptr, sl::kBufferTypeBackbuffer, sl::ResourceLifecycle{}, validViewportExtent ? &backBufferExtent : nullptr };
     sl::ResourceTag inputs[] = { backBufferResourceTag };
-    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), cmdbuffer), "slSetTag_dlss_fg");
+    successCheck(SetTag(inputs, _countof(inputs), cmdbuffer), "slSetTag_dlss_fg");
 }
 
 void SLWrapper::TagResources_DeepDVC(
@@ -1003,7 +1029,7 @@ void SLWrapper::TagResources_DeepDVC(
     sl::ResourceTag outputResourceTag = sl::ResourceTag{ &outputResource, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
     sl::ResourceTag inputs[] = { outputResourceTag };
-    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), cmdbuffer), "slSetTag_deepdvc");
+    successCheck(SetTag(inputs, _countof(inputs), cmdbuffer), "slSetTag_deepdvc");
 }
 
 void SLWrapper::TagResources_Latewarp(
@@ -1046,7 +1072,7 @@ void SLWrapper::TagResources_Latewarp(
     }
 
     inputs.push_back(backbufferResourceTag);
-    successCheck(slSetTag(m_viewport, inputs.data(), static_cast<uint32_t>(inputs.size()), cmdbuffer), "slSetTag_latewarp");
+    successCheck(SetTag(inputs.data(), static_cast<uint32_t>(inputs.size()), cmdbuffer), "slSetTag_latewarp");
 }
 
 void SLWrapper::UnTagResources_DeepDVC()
@@ -1054,7 +1080,7 @@ void SLWrapper::UnTagResources_DeepDVC()
     sl::ResourceTag outputResourceTag = sl::ResourceTag{ nullptr, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent };
 
     sl::ResourceTag inputs[] = { outputResourceTag };
-    successCheck(slSetTag(m_viewport, inputs, _countof(inputs), nullptr), "slSetTag_deepdvc_untag");
+    successCheck(SetTag(inputs, _countof(inputs), nullptr), "slSetTag_deepdvc_untag");
 }
 
 void SLWrapper::EvaluateDLSS(nvrhi::ICommandList* commandList) {
@@ -1288,7 +1314,6 @@ void SLWrapper::QueryReflexStats(bool& reflex_lowLatencyAvailable, bool& reflex_
 
 }
 
-#ifdef STREAMLINE_FEATURE_LATEWARP
 void SLWrapper::SetLatewarpOptions(const sl::LatewarpOptions& options) {
     static bool toggle = options.latewarpActive;
     if (toggle != options.latewarpActive)
@@ -1297,7 +1322,6 @@ void SLWrapper::SetLatewarpOptions(const sl::LatewarpOptions& options) {
         toggle = options.latewarpActive;
     }
 }
-#endif
 
 void SLWrapper::SetReflexCameraData(sl::FrameToken &frameToken, const sl::ReflexCameraData& cameraData) {
     slReflexSetCameraData(m_viewport, frameToken, cameraData);

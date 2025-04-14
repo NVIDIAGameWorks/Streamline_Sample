@@ -54,10 +54,7 @@
 #include <sl_nis.h>
 #include <sl_dlss_g.h>
 #include <sl_deepdvc.h>
-
-#ifdef STREAMLINE_FEATURE_LATEWARP
 #include <sl_latewarp.h>
-#endif
 
 #include "RenderTargets.h"
 
@@ -106,10 +103,6 @@ private:
     bool m_sl_initialised = false;
     nvrhi::GraphicsAPI m_api = nvrhi::GraphicsAPI::D3D12;
     nvrhi::IDevice* m_Device = nullptr;
-
-#if DONUT_WITH_DX11
-    LUID m_d3d11Luid;
-#endif
 
     bool m_dlss_available = false;
     sl::DLSSOptions m_dlss_consts{};
@@ -182,6 +175,14 @@ private:
 //
 
 
+    struct
+    {
+        bool checkSig = true;
+        bool enableLog = false;
+        bool useNewSetTagAPI = true;
+        bool allowSMSCG = false;
+    } m_SLOptions{};
+
 public:
 
     static SLWrapper& Get();
@@ -189,8 +190,10 @@ public:
     SLWrapper(SLWrapper&&) = delete;
     SLWrapper& operator=(const SLWrapper&) = delete;
     SLWrapper& operator=(SLWrapper&&) = delete;
-   
-    bool Initialize_preDevice(nvrhi::GraphicsAPI api, const bool& checkSig = true, const bool& SLlog = false);
+
+    virtual void SetSLOptions(const bool checkSig, const bool enableLog, const bool useNewSetTagAPI, const bool allowSMSCG);
+
+    bool Initialize_preDevice(nvrhi::GraphicsAPI api);
     bool Initialize_postDevice();
 
     bool GetSLInitialized() { return m_sl_initialised; }
@@ -203,9 +206,6 @@ public:
     void NativeToProxy(void* proxy, void** native);
     void FindAdapter(void*& adapterPtr, void* vkDevices = nullptr);
     static void QueueGPUWaitOnSyncObjectSet(nvrhi::IDevice* pDevice, nvrhi::CommandQueue cmdQType, void* syncObj, uint64_t syncObjVal);
-#if DONUT_WITH_DX11
-    LUID& getD3D11LUID() { return m_d3d11Luid; }
-#endif
 
     sl::FeatureRequirements GetFeatureRequirements(sl::Feature feature);
     sl::FeatureVersion GetFeatureVersion(sl::Feature feature);
@@ -309,12 +309,15 @@ public:
 
     void SetReflexCameraData(sl::FrameToken& frameToken, const sl::ReflexCameraData& cameraData);
     bool GetLatewarpAvailable() { return m_latewarp_available; }
-#ifdef STREAMLINE_FEATURE_LATEWARP
     void SetLatewarpOptions(const sl::LatewarpOptions& options);
-#endif
     void Set_Latewarp_SwapChainRecreation(bool on) { m_latewarp_triggerSwapchainRecreation = true; m_latewarp_shouldLoad = on; }
     bool Get_Latewarp_SwapChainRecreation(bool &turn_on) const { turn_on = m_latewarp_shouldLoad; return m_latewarp_triggerSwapchainRecreation; }
     void Quiet_Latewarp_SwapChainRecreation() { m_latewarp_triggerSwapchainRecreation = false; }
     void EvaluateLatewarp(nvrhi::ICommandList* commandList, RenderTargets* renderTargets, nvrhi::ITexture* inputColor, nvrhi::ITexture* outputColor, const donut::engine::IView* view) {}
+
+    sl::Result SetTag(const sl::ResourceTag* resources, uint32_t numResources, sl::CommandBuffer* cmdBuffer)
+    {
+        return m_SLOptions.useNewSetTagAPI ? slSetTagForFrame(*m_currentFrame, m_viewport, resources, numResources, cmdBuffer) : slSetTag(m_viewport, resources, numResources, cmdBuffer);
+    }
 };
 

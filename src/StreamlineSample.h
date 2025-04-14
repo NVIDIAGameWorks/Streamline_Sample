@@ -306,6 +306,10 @@ struct MultiViewportApp : public ApplicationBase
     {
         m_pViewports[0]->m_pSample->RenderSplashScreen(framebuffer);
     }
+    virtual bool ShouldRenderUnfocused() override
+    { 
+        return true; 
+    }
 
 private:
     typedef ApplicationBase Super;
